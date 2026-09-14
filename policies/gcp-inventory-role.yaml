@@ -1,0 +1,14 @@
+title: Vanguard Inventory Reader
+description: Minimum read permissions used by the Vanguard GCP collector
+stage: GA
+includedPermissions:
+  - compute.firewalls.list
+  - compute.instances.list
+  - compute.networks.list
+  - compute.subnetworks.list
+  - iam.serviceAccounts.list
+  - pubsub.subscriptions.list
+  - pubsub.topics.list
+  - resourcemanager.projects.get
+  - resourcemanager.projects.getIamPolicy
+
