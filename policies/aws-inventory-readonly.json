@@ -5,13 +5,13 @@
       "Sid": "VanguardInventoryReadOnly",
       "Effect": "Allow",
       "Action": [
+        "dynamodb:DescribeTable",
+        "dynamodb:ListTables",
         "ec2:DescribeInstances",
         "ec2:DescribeRegions",
         "ec2:DescribeSecurityGroups",
         "ec2:DescribeSubnets",
         "ec2:DescribeVpcs",
-        "iam:ListRoles",
-        "iam:ListUsers",
         "sns:ListTopics",
         "sqs:ListQueues",
         "sts:GetCallerIdentity"
@@ -20,4 +20,3 @@
     }
   ]
 }
-

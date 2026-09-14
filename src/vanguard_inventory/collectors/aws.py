@@ -24,12 +24,6 @@ class AWSCollector:
 
     def collect(self) -> CollectionResult:
         result = CollectionResult()
-        global_collectors: list[tuple[str, Callable[[], list[Resource]]]] = [
-            ("iam.users", self.iam_users),
-            ("iam.roles", self.iam_roles),
-        ]
-        for name, collector in global_collectors:
-            self._collect_one(result, name, collector)
         for region in self.regions:
             regional: list[tuple[str, Callable[[], list[Resource]]]] = [
                 ("ec2.instances", lambda region=region: self.ec2_instances(region)),
@@ -38,6 +32,7 @@ class AWSCollector:
                 ("ec2.security_groups", lambda region=region: self.security_groups(region)),
                 ("sns.topics", lambda region=region: self.sns_topics(region)),
                 ("sqs.queues", lambda region=region: self.sqs_queues(region)),
+                ("dynamodb.tables", lambda region=region: self.dynamodb_tables(region)),
             ]
             for name, collector in regional:
                 self._collect_one(result, f"{region}.{name}", collector)
@@ -105,26 +100,6 @@ class AWSCollector:
             region, "describe_security_groups", "SecurityGroups", "security_group", "GroupId"
         )
 
-    def iam_users(self) -> list[Resource]:
-        client = self.session.client("iam")
-        resources = []
-        for page in client.get_paginator("list_users").paginate():
-            for item in page["Users"]:
-                resources.append(self._resource(
-                    "iam_user", item["Arn"], name=item["UserName"], raw_data=item
-                ))
-        return resources
-
-    def iam_roles(self) -> list[Resource]:
-        client = self.session.client("iam")
-        resources = []
-        for page in client.get_paginator("list_roles").paginate():
-            for item in page["Roles"]:
-                resources.append(self._resource(
-                    "iam_role", item["Arn"], name=item["RoleName"], raw_data=item
-                ))
-        return resources
-
     def sns_topics(self, region: str) -> list[Resource]:
         client = self.session.client("sns", region_name=region)
         resources = []
@@ -144,6 +119,24 @@ class AWSCollector:
                 "sqs_queue", url, region=region, name=url.rsplit("/", 1)[-1],
                 raw_data={"QueueUrl": url},
             ) for url in page.get("QueueUrls", []))
+        return resources
+
+
+    def dynamodb_tables(self, region: str) -> list[Resource]:
+        client = self.session.client("dynamodb", region_name=region)
+        resources = []
+        for page in client.get_paginator("list_tables").paginate():
+            for table_name in page.get("TableNames", []):
+                table = client.describe_table(TableName=table_name)["Table"]
+                resources.append(self._resource(
+                    "dynamodb_table", table["TableArn"], region=region,
+                    name=table_name, status=table.get("TableStatus"),
+                    attributes={
+                        "billing_mode": table.get("BillingModeSummary", {}).get("BillingMode"),
+                        "item_count": table.get("ItemCount"),
+                    },
+                    raw_data=table,
+                ))
         return resources
 
 
