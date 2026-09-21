@@ -1,0 +1,59 @@
+# Private AWS transport: OTel hostmetrics -> CloudWatch EMF -> Vanguard's cloud reader.
+receivers:
+  hostmetrics:
+    collection_interval: 60s
+    scrapers:
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      filesystem:
+        metrics:
+          system.filesystem.utilization:
+            enabled: true
+        exclude_fs_types:
+          fs_types: [proc, sysfs, devtmpfs, tmpfs, overlay, squashfs]
+          match_type: strict
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 128
+    spike_limit_mib: 32
+  filter/used:
+    error_mode: propagate
+    metrics:
+      metric:
+        - 'name != "system.memory.utilization" and name != "system.filesystem.utilization"'
+      datapoint:
+        - 'metric.name == "system.memory.utilization" and attributes["state"] != "used"'
+  transform/percent:
+    error_mode: propagate
+    metric_statements:
+      - context: metric
+        statements:
+          - scale_metric(100.0)
+          - set(unit, "Percent")
+          - set(name, "MemoryUsedPercent") where name == "system.memory.utilization"
+          - set(name, "FilesystemUsedPercent") where name == "system.filesystem.utilization"
+          - aggregate_on_attributes("max", []) where name == "FilesystemUsedPercent"
+      - context: datapoint
+        statements:
+          - set(attributes["InstanceId"], "${env:VANGUARD_INSTANCE_ID}")
+  batch:
+    timeout: 10s
+exporters:
+  awsemf:
+    region: '${env:AWS_REGION}'
+    namespace: Vanguard/HostMetrics
+    log_group_name: /vanguard/host-metrics
+    log_stream_name: '${env:VANGUARD_INSTANCE_ID}'
+    dimension_rollup_option: NoDimensionRollup
+    metric_declarations:
+      - dimensions: [[InstanceId]]
+        metric_name_selectors: ['^MemoryUsedPercent$', '^FilesystemUsedPercent$']
+service:
+  pipelines:
+    metrics:
+      receivers: [hostmetrics]
+      processors: [memory_limiter, filter/used, transform/percent, batch]
+      exporters: [awsemf]

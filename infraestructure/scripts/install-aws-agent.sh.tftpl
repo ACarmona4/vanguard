@@ -1,0 +1,58 @@
+#!/bin/bash
+# Invoked automatically by cloud-init and SSM; safe to run repeatedly.
+set -euo pipefail
+umask 027
+exec 9>/run/vanguard-otel-install.lock
+flock -w 300 9
+
+BASE=/opt/vanguard-otel
+mkdir -p "$BASE/bin" "$BASE/etc" /var/cache/vanguard-otel
+PACKAGE=/var/cache/vanguard-otel/collector.tar.gz
+GENERATION='${generation}'
+
+# Refresh instance identity without storing long-lived cloud credentials.
+TOKEN=$(curl --fail --silent --show-error --retry 5 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)
+INSTANCE_ID=$(curl --fail --silent --show-error --retry 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+printf 'AWS_REGION=%s\nVANGUARD_INSTANCE_ID=%s\n' '${region}' "$INSTANCE_ID" > "$BASE/etc/environment"
+
+if [[ ! -x "$BASE/bin/otelcol-contrib" ]] || [[ "$(cat "$BASE/etc/generation" 2>/dev/null || true)" != "$GENERATION" ]]; then
+  aws s3 cp 's3://${bucket}/${package_key}' "$PACKAGE" --region '${region}' --only-show-errors
+  printf '%s  %s\n' '${package_sha256}' "$PACKAGE" | sha256sum --check --status
+  STAGING=$(mktemp -d "$BASE/bin/.install.XXXXXX")
+  trap 'rm -rf "$STAGING"' EXIT
+  tar -xzf "$PACKAGE" -C "$STAGING" otelcol-contrib
+  install -m 0755 "$STAGING/otelcol-contrib" "$BASE/bin/otelcol-contrib.new"
+  printf '%s' '${config_base64}' | base64 --decode > "$BASE/etc/config.yaml.new"
+  set -a
+  source "$BASE/etc/environment"
+  set +a
+  "$BASE/bin/otelcol-contrib.new" validate --config="$BASE/etc/config.yaml.new"
+  mv "$BASE/bin/otelcol-contrib.new" "$BASE/bin/otelcol-contrib"
+  mv "$BASE/etc/config.yaml.new" "$BASE/etc/config.yaml"
+  cat > /etc/systemd/system/vanguard-otel.service <<'UNIT'
+[Unit]
+Description=Vanguard OpenTelemetry host metrics
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+EnvironmentFile=/opt/vanguard-otel/etc/environment
+ExecStart=/opt/vanguard-otel/bin/otelcol-contrib --config=/opt/vanguard-otel/etc/config.yaml
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+MemoryMax=192M
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable vanguard-otel.service
+  systemctl restart vanguard-otel.service
+  printf '%s' "$GENERATION" > "$BASE/etc/generation"
+else
+  systemctl start vanguard-otel.service
+fi
+systemctl is-active --quiet vanguard-otel.service

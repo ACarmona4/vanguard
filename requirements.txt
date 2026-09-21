@@ -1,8 +1,10 @@
 boto3==1.43.94
+cryptography==50.0.1
 google-cloud-compute==1.53.0
 google-cloud-iam==2.25.0
 google-cloud-pubsub==2.40.0
 google-cloud-resource-manager==1.18.0
 psycopg[binary]==3.3.5
 python-dotenv==1.2.3
-
+fastapi==0.141.1
+uvicorn==0.53.0

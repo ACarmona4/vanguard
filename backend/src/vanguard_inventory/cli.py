@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from .config import load_environment
-from .database import check_database, save_resources
+from .database import check_database, save_resources, sync_resources
 from .serialization import write_snapshot
 
 
@@ -57,8 +57,27 @@ def _collect(args: argparse.Namespace) -> int:
         path = write_snapshot(result, args.provider, args.output_dir)
         print(f"Snapshot: {path}")
     if args.database_url:
-        saved = save_resources(args.database_url, result.resources)
+        if result.errors:
+            saved = save_resources(args.database_url, result.resources)
+            deleted = 0
+        elif args.provider == "aws":
+            saved, deleted = sync_resources(
+                args.database_url,
+                result.resources,
+                provider="aws",
+                scope_id=collector.account_id,
+                regions=collector.regions,
+            )
+        else:
+            saved, deleted = sync_resources(
+                args.database_url,
+                result.resources,
+                provider="gcp",
+                scope_id=args.project_id,
+            )
         print(f"Recursos guardados/actualizados en PostgreSQL: {saved}")
+        if not result.errors:
+            print(f"Recursos eliminados de PostgreSQL: {deleted}")
     else:
         print("PostgreSQL omitido: DATABASE_URL no está configurada")
     for error in result.errors:

@@ -1,0 +1,7 @@
+groups:
+  - name: vanguard-host-utilization
+    rules:
+      - record: vanguard_memory_percent
+        expr: 100 * max by (provider, scope_id, region, resource_type, resource_id) (system_memory_utilization{state="used"} and (time() - timestamp(system_memory_utilization{state="used"}) < 120))
+      - record: vanguard_filesystem_percent
+        expr: 100 * max by (provider, scope_id, region, resource_type, resource_id) (system_filesystem_utilization and (time() - timestamp(system_filesystem_utilization) < 120))

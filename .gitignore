@@ -1,7 +1,9 @@
 .DS_Store
+node_modules/
 .env
 .venv/
-vanguard-ingestion/.venv/
+.run/
+.vanguard/
 __pycache__/
 *.py[cod]
 .pytest_cache/

@@ -1,0 +1,44 @@
+# Run on the actual Linux VM, not on the Vanguard laptop or gateway.
+receivers:
+  hostmetrics:
+    collection_interval: 30s
+    scrapers:
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      filesystem:
+        metrics:
+          system.filesystem.utilization:
+            enabled: true
+        exclude_fs_types:
+          fs_types: [proc, sysfs, devtmpfs, tmpfs, overlay, squashfs]
+          match_type: strict
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 128
+    spike_limit_mib: 32
+  resource:
+    attributes:
+      - {key: provider, value: '${env:VANGUARD_PROVIDER}', action: upsert}
+      - {key: scope_id, value: '${env:VANGUARD_SCOPE_ID}', action: upsert}
+      - {key: region, value: '${env:VANGUARD_REGION}', action: upsert}
+      - {key: resource_type, value: '${env:VANGUARD_RESOURCE_TYPE}', action: upsert}
+      - {key: resource_id, value: '${env:VANGUARD_RESOURCE_ID}', action: upsert}
+  batch:
+    timeout: 5s
+exporters:
+  otlphttp:
+    endpoint: '${env:VANGUARD_OTLP_ENDPOINT}'
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+service:
+  pipelines:
+    metrics:
+      receivers: [hostmetrics]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlphttp]

@@ -5,16 +5,17 @@
       "Sid": "VanguardInventoryReadOnly",
       "Effect": "Allow",
       "Action": [
+        "cloudwatch:GetMetricData",
         "dynamodb:DescribeTable",
         "dynamodb:ListTables",
         "ec2:DescribeInstances",
+        "ec2:DescribeVolumes",
         "ec2:DescribeRegions",
         "ec2:DescribeSecurityGroups",
         "ec2:DescribeSubnets",
         "ec2:DescribeVpcs",
         "sns:ListTopics",
-        "sqs:ListQueues",
-        "sts:GetCallerIdentity"
+        "sqs:ListQueues"
       ],
       "Resource": "*"
     }

@@ -18,13 +18,15 @@ def _last_path_part(value: str | None) -> str | None:
 
 
 class GCPCollector:
-    def __init__(self, project_id: str):
+    def __init__(self, project_id: str, credentials=None):
         self.project_id = project_id
+        self.credentials = credentials
 
     def collect(self) -> CollectionResult:
         result = CollectionResult()
         collectors: list[tuple[str, Callable[[], list[Resource]]]] = [
             ("compute.instances", self.instances),
+            ("cloudsql.instances", self.sql_instances),
             ("compute.networks", self.networks),
             ("compute.subnetworks", self.subnetworks),
             ("compute.firewalls", self.firewalls),
@@ -44,7 +46,7 @@ class GCPCollector:
         from google.cloud import compute_v1
 
         resources: list[Resource] = []
-        client = compute_v1.InstancesClient()
+        client = compute_v1.InstancesClient(credentials=self.credentials)
         for scope, response in client.aggregated_list(project=self.project_id):
             for instance in response.instances or []:
                 interface = instance.network_interfaces[0] if instance.network_interfaces else None
@@ -58,6 +60,7 @@ class GCPCollector:
                     name=instance.name,
                     scope_id=self.project_id,
                     zone=_last_path_part(instance.zone) or _last_path_part(scope),
+                    region=(_last_path_part(instance.zone) or _last_path_part(scope)).rsplit("-", 1)[0],
                     status=instance.status,
                     attributes={
                         "machine_type": _last_path_part(instance.machine_type),
@@ -68,19 +71,52 @@ class GCPCollector:
                 ))
         return resources
 
+    def sql_instances(self) -> list[Resource]:
+        from google.auth.transport.requests import AuthorizedSession
+        from urllib.parse import quote
+        import google.auth
+
+        credentials = self.credentials or google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])[0]
+        resources = []
+        with AuthorizedSession(credentials) as session:
+            params = {}
+            while True:
+                response = session.get(
+                    f"https://sqladmin.googleapis.com/sql/v1beta4/projects/{quote(self.project_id, safe='')}/instances",
+                    params=params, timeout=20,
+                )
+                response.raise_for_status()
+                body = response.json()
+                for instance in body.get("items", []):
+                    resources.append(Resource(
+                        provider="gcp", resource_type="cloudsql_instance",
+                        resource_id=instance["name"], name=instance["name"],
+                        scope_id=self.project_id, region=instance.get("region"),
+                        status=instance.get("state"), attributes={"database_version": instance.get("databaseVersion")},
+                        raw_data=instance,
+                    ))
+                if not body.get("nextPageToken"):
+                    break
+                params["pageToken"] = body["nextPageToken"]
+        return resources
+
     def networks(self) -> list[Resource]:
         from google.cloud import compute_v1
 
         return [Resource(
             provider="gcp", resource_type="vpc_network", resource_id=str(network.id),
             name=network.name, scope_id=self.project_id, raw_data=_message_to_dict(network),
-        ) for network in compute_v1.NetworksClient().list(project=self.project_id)]
+        ) for network in compute_v1.NetworksClient(credentials=self.credentials).list(
+            project=self.project_id
+        )]
 
     def subnetworks(self) -> list[Resource]:
         from google.cloud import compute_v1
 
         resources: list[Resource] = []
-        for scope, response in compute_v1.SubnetworksClient().aggregated_list(project=self.project_id):
+        for scope, response in compute_v1.SubnetworksClient(
+            credentials=self.credentials
+        ).aggregated_list(project=self.project_id):
             for subnet in response.subnetworks or []:
                 resources.append(Resource(
                     provider="gcp", resource_type="subnetwork", resource_id=str(subnet.id),
@@ -97,7 +133,9 @@ class GCPCollector:
             provider="gcp", resource_type="firewall_rule", resource_id=str(rule.id),
             name=rule.name, scope_id=self.project_id,
             status="DISABLED" if rule.disabled else "ENABLED", raw_data=_message_to_dict(rule),
-        ) for rule in compute_v1.FirewallsClient().list(project=self.project_id)]
+        ) for rule in compute_v1.FirewallsClient(credentials=self.credentials).list(
+            project=self.project_id
+        )]
 
     def pubsub_topics(self) -> list[Resource]:
         from google.cloud import pubsub_v1
@@ -106,7 +144,9 @@ class GCPCollector:
         return [Resource(
             provider="gcp", resource_type="pubsub_topic", resource_id=topic.name,
             name=_last_path_part(topic.name), scope_id=self.project_id, raw_data=_message_to_dict(topic),
-        ) for topic in pubsub_v1.PublisherClient().list_topics(request={"project": parent})]
+        ) for topic in pubsub_v1.PublisherClient(
+            credentials=self.credentials
+        ).list_topics(request={"project": parent})]
 
     def pubsub_subscriptions(self) -> list[Resource]:
         from google.cloud import pubsub_v1
@@ -118,7 +158,9 @@ class GCPCollector:
             status=str(subscription.state.name),
             attributes={"topic": subscription.topic, "filter": subscription.filter},
             raw_data=_message_to_dict(subscription),
-        ) for subscription in pubsub_v1.SubscriberClient().list_subscriptions(
+        ) for subscription in pubsub_v1.SubscriberClient(
+            credentials=self.credentials
+        ).list_subscriptions(
             request={"project": parent}
         )]
 
@@ -128,7 +170,9 @@ class GCPCollector:
         return [Resource(
             provider="gcp", resource_type="service_account", resource_id=account.unique_id,
             name=account.email, scope_id=self.project_id, raw_data=_message_to_dict(account),
-        ) for account in iam_admin_v1.IAMClient().list_service_accounts(
+        ) for account in iam_admin_v1.IAMClient(
+            credentials=self.credentials
+        ).list_service_accounts(
             request={"name": f"projects/{self.project_id}"}
         )]
 
@@ -136,7 +180,9 @@ class GCPCollector:
         from google.cloud import resourcemanager_v3
         from google.iam.v1 import iam_policy_pb2
 
-        policy = resourcemanager_v3.ProjectsClient().get_iam_policy(
+        policy = resourcemanager_v3.ProjectsClient(
+            credentials=self.credentials
+        ).get_iam_policy(
             request=iam_policy_pb2.GetIamPolicyRequest(resource=f"projects/{self.project_id}")
         )
         return [Resource(
@@ -158,4 +204,3 @@ def check_gcp(project_id: str) -> str:
         f"GCP disponible: project={project.project_id}, state={project.state.name}, "
         f"credential_project={detected_project or 'not-set'}"
     )
-

@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.7.0"
 
   required_providers {
     aws = {
@@ -125,6 +125,16 @@ resource "aws_instance" "dummy" {
   subnet_id                   = aws_subnet.dummy[0].id
   vpc_security_group_ids      = [aws_security_group.vm[0].id]
   associate_public_ip_address = false
+  iam_instance_profile        = data.aws_iam_instance_profile.telemetry[0].name
+  user_data                   = local.agent_install
+  user_data_replace_on_change = false
+
+  # SSM applies agent updates; changing bootstrap data must not reboot existing VMs.
+  lifecycle {
+    ignore_changes = [user_data]
+  }
+
+  depends_on = [aws_vpc_endpoint.telemetry, aws_vpc_endpoint.agent_s3, aws_cloudwatch_log_group.host_metrics]
 
   root_block_device {
     volume_type           = "gp3"
@@ -138,7 +148,7 @@ resource "aws_instance" "dummy" {
     http_tokens   = "required"
   }
 
-  tags = { Name = "vanguard-dummy-vm" }
+  tags = { Name = "vanguard-dummy-vm", VanguardAgent = "managed" }
 }
 
 resource "aws_dynamodb_table" "dummy" {

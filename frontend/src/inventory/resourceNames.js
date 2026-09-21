@@ -1,0 +1,20 @@
+export const resourceNames = {
+  ebs_volume: "Volumen EBS",
+  ec2_instance: "Instancia EC2",
+  vpc: "VPC",
+  subnet: "Subred",
+  security_group: "Grupo de seguridad",
+  sns_topic: "Tópico SNS",
+  sqs_queue: "Cola SQS",
+  dynamodb_table: "Tabla DynamoDB",
+  cloudsql_instance: "Instancia Cloud SQL",
+  compute_instance: "Instancia Compute",
+  vpc_network: "Red VPC",
+  subnetwork: "Subred",
+  firewall_rule: "Regla de firewall",
+  pubsub_topic: "Tópico Pub/Sub",
+  pubsub_subscription: "Suscripción Pub/Sub",
+  service_account: "Cuenta de servicio",
+  project_iam_policy: "Política IAM",
+};
+export const typeName = (value) => resourceNames[value] || value;

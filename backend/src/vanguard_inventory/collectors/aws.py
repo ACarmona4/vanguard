@@ -11,10 +11,22 @@ def _tags(tags: list[dict[str, str]] | None) -> dict[str, str]:
 
 
 class AWSCollector:
-    def __init__(self, profile: str | None = None, regions: Iterable[str] | None = None):
+    def __init__(
+        self,
+        profile: str | None = None,
+        regions: Iterable[str] | None = None,
+        credentials: dict[str, str] | None = None,
+    ):
         import boto3
 
-        self.session = boto3.Session(profile_name=profile) if profile else boto3.Session()
+        if credentials:
+            self.session = boto3.Session(
+                aws_access_key_id=credentials["access_key_id"],
+                aws_secret_access_key=credentials["secret_access_key"],
+                aws_session_token=credentials.get("session_token") or None,
+            )
+        else:
+            self.session = boto3.Session(profile_name=profile) if profile else boto3.Session()
         self.account_id = self.session.client("sts").get_caller_identity()["Account"]
         requested = [region.strip() for region in regions or [] if region.strip()]
         self.regions = requested or ([self.session.region_name] if self.session.region_name else [])
@@ -27,6 +39,7 @@ class AWSCollector:
         for region in self.regions:
             regional: list[tuple[str, Callable[[], list[Resource]]]] = [
                 ("ec2.instances", lambda region=region: self.ec2_instances(region)),
+                ("ec2.volumes", lambda region=region: self.ebs_volumes(region)),
                 ("ec2.vpcs", lambda region=region: self.ec2_vpcs(region)),
                 ("ec2.subnets", lambda region=region: self.ec2_subnets(region)),
                 ("ec2.security_groups", lambda region=region: self.security_groups(region)),
@@ -88,6 +101,9 @@ class AWSCollector:
                     attributes={"tags": tags}, raw_data=item,
                 ))
         return resources
+
+    def ebs_volumes(self, region: str) -> list[Resource]:
+        return self._describe(region, "describe_volumes", "Volumes", "ebs_volume", "VolumeId", "State")
 
     def ec2_vpcs(self, region: str) -> list[Resource]:
         return self._describe(region, "describe_vpcs", "Vpcs", "vpc", "VpcId", "State")
