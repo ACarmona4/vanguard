@@ -4,21 +4,47 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
 
 
+LOCAL_VAULT_KEY = Path(".vanguard/vault.key")
+
+
 def _cipher() -> Fernet:
-    try:
-        return Fernet(os.environ["VANGUARD_MASTER_KEY"].encode())
-    except KeyError as exc:
+    configured_key = os.getenv("VANGUARD_MASTER_KEY")
+    if configured_key:
+        try:
+            return Fernet(configured_key.encode())
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("VANGUARD_MASTER_KEY is invalid") from exc
+
+    environment = os.getenv("VANGUARD_ENVIRONMENT", "development").strip().lower()
+    if environment == "production":
         raise RuntimeError(
             "Credential encryption is not configured. Provide VANGUARD_MASTER_KEY "
-            "through the deployment secret manager, never in .env."
-        ) from exc
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError("VANGUARD_MASTER_KEY is invalid") from exc
+            "through the deployment secret manager."
+        )
+
+    # Local development is zero-configuration. This installation key is not a
+    # cloud credential and never leaves the machine; cloud secrets remain only
+    # inside encrypted database records.
+    path = Path(os.getenv("VANGUARD_LOCAL_VAULT_KEY_FILE", LOCAL_VAULT_KEY)).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        with os.fdopen(descriptor, "wb") as key_file:
+            key_file.write(Fernet.generate_key())
+    try:
+        os.chmod(path, 0o600)
+        return Fernet(path.read_bytes().strip())
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("The local credential vault could not be initialized") from exc
 
 
 def encrypt_credentials(credentials: dict[str, Any]) -> str:
