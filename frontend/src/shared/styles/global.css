@@ -185,7 +185,7 @@ nav a {
   gap: 10px;
   padding: 20px 2px;
 }
-.sidebar-footer.profile-active {
+.sidebar-footer.accounts-active {
   background: #ededee;
   margin-inline: -8px;
   padding-inline: 10px;
@@ -240,11 +240,6 @@ nav a {
 .dashboard-sync small {
   font-size: 10px;
   line-height: 1.6;
-}
-.dashboard-future {
-  color: var(--muted);
-  font-size: 11px;
-  margin-top: 28px;
 }
 @media (max-width: 800px) {
   .topbar .mobile-nav {
@@ -862,7 +857,7 @@ pre {
   font-size: 12px;
   margin-top: 12px;
 }
-.profile-grid {
+.accounts-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.75fr);
   gap: 24px;
@@ -1246,7 +1241,7 @@ pre {
   .resource-id {
     max-width: 185px;
   }
-  .profile-grid {
+  .accounts-grid {
     grid-template-columns: 1fr;
   }
 }

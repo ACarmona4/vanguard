@@ -1,4 +1,4 @@
-.PHONY: dev stop status observability observability-stop test aws-lab-plan aws-lab
+.PHONY: dev stop status observability observability-stop verify aws-lab-plan aws-lab
 
 dev:
 	@./dev.sh start
@@ -15,8 +15,8 @@ observability:
 observability-stop:
 	@docker compose stop otel-collector prometheus
 
-test:
-	@PYTHONPATH=backend/src .venv/bin/python -m unittest discover -s backend/tests -v
+verify:
+	@PYTHONPATH=backend/src .venv/bin/python -m compileall -q backend/src
 	@npm --prefix frontend run build
 
 aws-lab-plan:

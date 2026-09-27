@@ -10,7 +10,7 @@ export default function AppLayout({ children, page }) {
   const title = {
     dashboard: "Dashboard",
     inventory: "Inventory",
-    profile: "Profile",
+    accounts: "Accounts",
     utilization: "Utilization",
   }[page];
   return (
@@ -54,14 +54,14 @@ export default function AppLayout({ children, page }) {
           </a>
         </nav>
         <a
-          href="#profile"
-          className={`sidebar-footer ${page === "profile" ? "profile-active" : ""}`}
-          aria-current={page === "profile" ? "page" : undefined}
+          href="#accounts"
+          className={`sidebar-footer ${page === "accounts" ? "accounts-active" : ""}`}
+          aria-current={page === "accounts" ? "page" : undefined}
         >
           <span className="avatar">A</span>
           <div>
             <strong>Administrator</strong>
-            <small>Profile and connections</small>
+            <small>Cloud accounts</small>
           </div>
           <span className="version">v0.1</span>
         </a>
@@ -93,10 +93,10 @@ export default function AppLayout({ children, page }) {
               Utilization
             </a>
             <a
-              href="#profile"
-              aria-current={page === "profile" ? "page" : undefined}
+              href="#accounts"
+              aria-current={page === "accounts" ? "page" : undefined}
             >
-              <UserRound size={14} /> Profile
+              <UserRound size={14} /> Accounts
             </a>
           </nav>
         </header>

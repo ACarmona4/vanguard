@@ -12,8 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 
-from . import __version__, cloud_connections, repository
-from .cloud_credentials import encrypt_credentials, validate_aws, validate_gcp
+from . import __version__, repository
+from .accounts import connections as cloud_connections
+from .accounts.credentials import encrypt_credentials, validate_aws, validate_gcp
 from .utilization.api import create_router as utilization_router
 from .utilization.worker import metrics_worker
 from .config import load_environment

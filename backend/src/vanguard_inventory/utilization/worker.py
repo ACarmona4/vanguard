@@ -9,8 +9,8 @@ from threading import Lock
 import psycopg
 from psycopg.rows import dict_row
 
-from .. import cloud_connections
-from ..cloud_credentials import decrypt_credentials
+from ..accounts import connections as cloud_connections
+from ..accounts.credentials import decrypt_credentials
 from .catalog import metrics_for
 from .cloud import aws_samples, gcp_samples
 from .otlp import export

@@ -154,11 +154,3 @@ class AWSCollector:
                     raw_data=table,
                 ))
         return resources
-
-
-def check_aws(profile: str | None = None) -> str:
-    import boto3
-
-    session = boto3.Session(profile_name=profile) if profile else boto3.Session()
-    identity = session.client("sts").get_caller_identity()
-    return f"AWS available: account={identity['Account']}, arn={identity['Arn']}"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -23,12 +23,6 @@ class Resource:
     raw_data: dict[str, Any] = field(default_factory=dict)
     collected_at: datetime = field(default_factory=utc_now)
 
-    def to_dict(self) -> dict[str, Any]:
-        value = asdict(self)
-        value["collected_at"] = self.collected_at.isoformat()
-        return value
-
-
 @dataclass(slots=True)
 class CollectionResult:
     resources: list[Resource] = field(default_factory=list)
@@ -36,4 +30,3 @@ class CollectionResult:
 
     def extend(self, resources: list[Resource]) -> None:
         self.resources.extend(resources)
-

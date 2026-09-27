@@ -190,17 +190,3 @@ class GCPCollector:
             resource_id=f"projects/{self.project_id}/iamPolicy", name="iamPolicy",
             scope_id=self.project_id, raw_data=_message_to_dict(policy),
         )]
-
-
-def check_gcp(project_id: str) -> str:
-    import google.auth
-    from google.auth.transport.requests import Request
-    from google.cloud import resourcemanager_v3
-
-    credentials, detected_project = google.auth.default()
-    credentials.refresh(Request())
-    project = resourcemanager_v3.ProjectsClient().get_project(name=f"projects/{project_id}")
-    return (
-        f"GCP available: project={project.project_id}, state={project.state.name}, "
-        f"credential_project={detected_project or 'not-set'}"
-    )

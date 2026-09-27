@@ -41,7 +41,7 @@ def prepare_agent():
 def connection_environment():
     import psycopg
     from vanguard_inventory.config import load_environment
-    from vanguard_inventory.cloud_credentials import decrypt_credentials
+    from vanguard_inventory.accounts.credentials import decrypt_credentials
 
     load_environment(ROOT / ".env")
     with psycopg.connect(os.environ["DATABASE_URL"], connect_timeout=5) as connection:

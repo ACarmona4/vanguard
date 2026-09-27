@@ -166,13 +166,3 @@ def sync_resources(
             deleted = cursor.rowcount
         connection.commit()
     return len(rows), deleted
-
-
-def check_database(database_url: str) -> str:
-    import psycopg
-
-    with psycopg.connect(database_url, connect_timeout=5) as connection:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT current_database(), current_user")
-            database, user = cursor.fetchone()
-    return f"PostgreSQL available: database={database}, user={user}"

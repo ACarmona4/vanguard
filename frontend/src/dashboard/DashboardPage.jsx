@@ -107,9 +107,6 @@ export default function DashboardPage() {
         </div>
       </section>
       <UtilizationWidgets />
-      <p className="dashboard-future">
-        Coming soon: costs, recommendations, and automations.
-      </p>
     </main>
   );
 }

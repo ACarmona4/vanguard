@@ -8,7 +8,7 @@ import boto3
 from botocore.config import Config
 from google.auth.transport.requests import AuthorizedSession
 
-from ..cloud_credentials import gcp_credentials
+from ..accounts.credentials import gcp_credentials
 from .catalog import AWS, GCP, metrics_for
 
 

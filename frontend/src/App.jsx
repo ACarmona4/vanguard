@@ -3,13 +3,14 @@ import InventoryPage from "./inventory/InventoryPage";
 import AppLayout from "./shared/layout/AppLayout";
 import { useEffect, useState } from "react";
 import DashboardPage from "./dashboard/DashboardPage";
-import ProfilePage from "./profile/ProfilePage";
-import CloudAccessRequired from "./profile/CloudAccessRequired";
-import { listConnections } from "./profile/api";
+import AccountSettingsPage from "./accounts/AccountSettingsPage";
+import CloudAccessRequired from "./accounts/CloudAccessRequired";
+import { listConnections } from "./accounts/api";
 
 function currentPage() {
   const page = window.location.hash.replace("#", "");
-  return ["dashboard", "inventory", "utilization", "profile"].includes(page)
+  if (page === "profile") return "accounts";
+  return ["dashboard", "inventory", "utilization", "accounts"].includes(page)
     ? page
     : "dashboard";
 }
@@ -70,7 +71,7 @@ export default function App() {
     };
   }, []);
 
-  const protectedPage = page !== "profile";
+  const protectedPage = page !== "accounts";
   const blocked = protectedPage && !cloudAccess.loading && cloudAccess.reason;
 
   return (
@@ -91,8 +92,8 @@ export default function App() {
         <InventoryPage />
       ) : page === "utilization" ? (
         <UtilizationPage />
-      ) : page === "profile" ? (
-        <ProfilePage />
+      ) : page === "accounts" ? (
+        <AccountSettingsPage />
       ) : (
         <DashboardPage />
       )}
