@@ -2,10 +2,12 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "VanguardInventoryReadOnly",
+      "Sid": "VanguardCloudReadOnly",
       "Effect": "Allow",
       "Action": [
         "cloudwatch:GetMetricData",
+        "ce:GetCostAndUsage",
+        "ce:GetCostAndUsageWithResources",
         "dynamodb:DescribeTable",
         "dynamodb:ListTables",
         "ec2:DescribeInstances",

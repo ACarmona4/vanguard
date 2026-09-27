@@ -8,11 +8,12 @@ import CloudAccessRequired from "./accounts/CloudAccessRequired";
 import { listConnections } from "./accounts/api";
 import AuthPage from "./auth/AuthPage";
 import { useAuth } from "./auth/AuthProvider";
+import CostsPage from "./costs/CostsPage";
 
 function currentPage() {
   const page = window.location.hash.replace("#", "");
   if (page === "profile") return "accounts";
-  return ["dashboard", "inventory", "utilization", "accounts"].includes(page)
+  return ["dashboard", "inventory", "utilization", "costs", "accounts"].includes(page)
     ? page
     : "dashboard";
 }
@@ -101,6 +102,8 @@ export default function App() {
         <InventoryPage />
       ) : page === "utilization" ? (
         <UtilizationPage />
+      ) : page === "costs" ? (
+        <CostsPage />
       ) : page === "accounts" ? (
         <AccountSettingsPage />
       ) : (

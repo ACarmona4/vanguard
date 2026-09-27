@@ -20,6 +20,9 @@ from .accounts import connections as cloud_connections
 from .accounts import deployments as lab_deployments
 from .accounts.mailer import send_password_reset
 from .accounts.credentials import encrypt_credentials, validate_aws, validate_gcp
+from .costs import repository as cost_repository
+from .costs.api import create_router as costs_router
+from .costs.worker import cost_worker
 from .utilization.api import create_router as utilization_router
 from .utilization.worker import metrics_worker
 from .config import load_environment
@@ -61,6 +64,7 @@ async def lifespan(_app: FastAPI):
             cloud_connections.ensure_table(connection)
             ensure_inventory_schema(connection)
             lab_deployments.ensure_table(connection)
+            cost_repository.ensure_schema(connection)
             connection.commit()
     aws_collection_scheduler.configure()
     task = None
@@ -69,10 +73,12 @@ async def lifespan(_app: FastAPI):
             aws_collection_scheduler.run(), name="aws-inventory-collector"
         )
     metrics_task = asyncio.create_task(metrics_worker.run(), name="utilization-collector")
+    costs_task = asyncio.create_task(cost_worker.run(), name="cost-collector")
     try:
         yield
     finally:
         await stop_scheduler(metrics_task)
+        await stop_scheduler(costs_task)
         await stop_scheduler(task)
 
 
@@ -135,6 +141,7 @@ def verify_csrf(
 
 ProtectedUser = Annotated[dict, Depends(verify_csrf)]
 app.include_router(utilization_router(Database, CurrentUser))
+app.include_router(costs_router(Database, WriteDatabase, CurrentUser, ProtectedUser))
 
 
 def _set_session_cookie(response: Response, token: str, expires_at) -> None:
@@ -353,6 +360,8 @@ def cloud_connection_create(
             identity=verified["identity"],
             encrypted_credentials=encrypted_credentials,
         )
+        cost_repository.ensure_source(connection, created)
+        connection.commit()
         background_tasks.add_task(_sync_cloud_connection, str(created["id"]), str(user["id"]))
         return created
     except psycopg.errors.UniqueViolation as exc:

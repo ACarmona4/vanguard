@@ -8,6 +8,7 @@ import {
   LogOut,
   Moon,
   Sun,
+  CircleDollarSign,
 } from "lucide-react";
 import { useAuth } from "../../auth/AuthProvider";
 export default function AppLayout({ children, page }) {
@@ -17,6 +18,7 @@ export default function AppLayout({ children, page }) {
     inventory: "Inventory",
     accounts: "Accounts",
     utilization: "Utilization",
+    costs: "Costs",
   }[page];
   return (
     <div className="app-shell">
@@ -57,6 +59,13 @@ export default function AppLayout({ children, page }) {
           >
             <Activity size={18} /> Utilization
           </a>
+          <a
+            href="#costs"
+            className={page === "costs" ? "nav-active" : ""}
+            aria-current={page === "costs" ? "page" : undefined}
+          >
+            <CircleDollarSign size={18} /> Costs
+          </a>
         </nav>
         <a
           href="#accounts"
@@ -96,6 +105,12 @@ export default function AppLayout({ children, page }) {
               aria-current={page === "utilization" ? "page" : undefined}
             >
               Utilization
+            </a>
+            <a
+              href="#costs"
+              aria-current={page === "costs" ? "page" : undefined}
+            >
+              Costs
             </a>
             <a
               href="#accounts"

@@ -1,5 +1,5 @@
-title: Vanguard Inventory Reader
-description: Minimum read permissions used by the Vanguard GCP collector
+title: Vanguard Cloud Reader
+description: Read permissions used by Vanguard inventory, metrics, and cost collectors
 stage: GA
 includedPermissions:
   - cloudsql.databases.list
@@ -16,3 +16,6 @@ includedPermissions:
   - resourcemanager.projects.getIamPolicy
 
   - monitoring.timeSeries.list
+  - bigquery.jobs.create
+  - bigquery.tables.get
+  - bigquery.tables.getData
