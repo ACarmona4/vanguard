@@ -1,4 +1,5 @@
 import { useUtilization, metricValue } from "./api";
+import Notification from "../shared/components/Notification";
 
 export default function UtilizationWidgets() {
   const { data, loading, error } = useUtilization("/summary");
@@ -30,11 +31,7 @@ export default function UtilizationWidgets() {
         <h2>Utilization</h2>
         <a href="#utilization">View utilization →</a>
       </div>
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
+      <Notification message={error} type="error" />
       {data?.collection?.errors?.length > 0 && (
         <p className="utilization-notice" role="status">
           Metric collection is partial. See the details under Utilization.

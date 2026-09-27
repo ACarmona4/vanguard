@@ -18,6 +18,7 @@ import { date, number, time } from "../shared/utils/format";
 import Metric from "../shared/components/Metric";
 import Filter from "../shared/components/Filter";
 import ResourceDetails from "./components/ResourceDetails";
+import Notification from "../shared/components/Notification";
 
 const PAGE_SIZE = 10;
 const AUTO_REFRESH_MS = 60_000;
@@ -144,13 +145,10 @@ export default function InventoryPage() {
           ))}
         </div>
 
-        {error && (
-          <div className="error" role="alert">
-            <strong>Failed to load resources.</strong>
-            <p>{error}</p>
-            <p>We will retry automatically during the next cycle.</p>
-          </div>
-        )}
+        <Notification
+          message={error && `Failed to load resources. ${error}`}
+          type="error"
+        />
         <section className="metrics" aria-label="Inventory summary">
           <Metric
             label="Total resources"

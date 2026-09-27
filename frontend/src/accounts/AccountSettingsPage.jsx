@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  CheckCircle2,
   Cloud,
   FlaskConical,
   KeyRound,
@@ -24,6 +23,7 @@ import {
 import { date } from "../shared/utils/format";
 import { useAuth } from "../auth/AuthProvider";
 import { apiRequest } from "../api/client";
+import Notification from "../shared/components/Notification";
 
 const initialAWS = {
   name: "",
@@ -58,6 +58,8 @@ export default function AccountSettingsPage() {
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const dismissError = useCallback(() => setError(""), []);
+  const dismissNotice = useCallback(() => setNotice(""), []);
   const [profile, setProfile] = useState({ full_name: auth.user.full_name, theme: auth.user.theme });
   const [passwords, setPasswords] = useState({ current_password: "", new_password: "" });
   const [labConnection, setLabConnection] = useState("");
@@ -271,8 +273,8 @@ export default function AccountSettingsPage() {
         </div>
       </section>
 
-      {error && <div className="error" role="alert">{error}</div>}
-      {notice && <div className="success-message" role="status"><CheckCircle2 size={15} /> {notice}</div>}
+      <Notification message={error} type="error" onDismiss={dismissError} />
+      <Notification message={notice} onDismiss={dismissNotice} />
 
       <section className="account-center-grid">
         <form className="connection-form" onSubmit={saveProfile}>
@@ -298,9 +300,6 @@ export default function AccountSettingsPage() {
           <div className="section-heading">
             <div>
               <h2>Configured connections</h2>
-              <p className="muted">
-                Secrets are never displayed in the interface again.
-              </p>
             </div>
             <span className="count-badge">{connections.length}</span>
           </div>
@@ -530,7 +529,7 @@ export default function AccountSettingsPage() {
 
       <section className="lab-panel">
         <div className="section-heading">
-          <div><h2>Disposable infrastructure lab</h2><p className="muted">Deploy or destroy the dummy environment using a connection from this account. No terminal or local cloud credentials are required.</p></div>
+          <div><h2>Disposable infrastructure lab</h2><p className="muted">Deploy or destroy a temporary environment.</p></div>
           <FlaskConical size={20} />
         </div>
         <div className="lab-controls">
@@ -540,7 +539,7 @@ export default function AccountSettingsPage() {
           </select>
           <button className="button primary" disabled={!labConnection || labBusy} onClick={createLab}>Deploy dummy lab</button>
         </div>
-        <p className="security-note"><ShieldCheck size={17} /><span>This creates billable cloud resources tagged as disposable. Vanguard keeps Terraform state in your isolated account record so it can safely destroy the same resources later.</span></p>
+        <p className="security-note"><ShieldCheck size={17} /><span>Creates billable cloud resources tagged as disposable.</span></p>
         <div className="connection-list">
           {deployments.map((deployment) => {
             const connection = connections.find((item) => item.id === deployment.connection_id);

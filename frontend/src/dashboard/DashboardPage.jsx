@@ -4,6 +4,7 @@ import { ArrowUpRight, Box, Globe2, Layers3 } from "lucide-react";
 import { getInventory } from "../inventory/api";
 import Metric from "../shared/components/Metric";
 import { date } from "../shared/utils/format";
+import Notification from "../shared/components/Notification";
 
 export default function DashboardPage() {
   const [data, setData] = useState(null);
@@ -54,11 +55,7 @@ export default function DashboardPage() {
           <p>An overview of your cloud resources.</p>
         </div>
       </section>
-      {error && (
-        <div className="error" role="alert">
-          {error} We will retry automatically.
-        </div>
-      )}
+      <Notification message={error} type="error" />
       <section
         className="metrics dashboard-metrics"
         aria-label="General inventory summary"

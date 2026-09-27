@@ -3,6 +3,7 @@ import { useUtilization, metricValue } from "./api";
 import { typeName } from "../inventory/resourceNames";
 import { date } from "../shared/utils/format";
 import Filter from "../shared/components/Filter";
+import Notification from "../shared/components/Notification";
 
 const resourceTypes = [
   "ec2_instance",
@@ -106,11 +107,7 @@ function ResourceHistory({ id, onClose }) {
           <option value="24">Last 24 hours</option>
         </select>
       </label>
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
+      <Notification message={error} type="error" />
       {loading && <p role="status">Loading history…</p>}
       <div className="utilization-chart-grid">
         {data?.metrics.map((metric) => (
@@ -179,12 +176,6 @@ export default function UtilizationPage() {
           <p>Real metrics from your cloud machines and services.</p>
         </div>
       </section>
-      <p className="utilization-notice">
-        Provider-native metrics only; Vanguard does not install software on
-        your infrastructure. Virtual machines expose CPU, network and I/O;
-        managed services show the metrics their cloud API provides. Samples may
-        take several minutes to appear.
-      </p>
       <div className="filters">
         <Filter
           label="Cloud"
@@ -217,16 +208,12 @@ export default function UtilizationPage() {
           />
         </label>
       </div>
-      {error && (
-        <p className="error" role="alert">
-          {error} We will retry automatically.
-        </p>
-      )}
+      <Notification message={error} type="error" />
       {data?.collection?.status === "disabled" && (
         <p className="utilization-notice">Metric collection is disabled.</p>
       )}
       {data?.collection?.errors?.length > 0 && (
-        <div className="error" role="alert">
+        <div className="utilization-notice" role="status">
           <strong>Partial collection</strong>
           <ul>
             {data.collection.errors.map((message, index) => (

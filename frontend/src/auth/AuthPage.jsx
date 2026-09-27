@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { ArrowLeft, KeyRound, Layers3, LoaderCircle, Mail, ShieldCheck } from "lucide-react";
+import { useCallback, useState } from "react";
+import { ArrowLeft, KeyRound, Layers3, LoaderCircle, ShieldCheck } from "lucide-react";
 import { apiRequest } from "../api/client";
+import Notification from "../shared/components/Notification";
 import { useAuth } from "./AuthProvider";
 
 function initialMode() {
@@ -15,6 +16,8 @@ export default function AuthPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const dismissError = useCallback(() => setError(""), []);
+  const dismissNotice = useCallback(() => setNotice(""), []);
 
   function change(event) {
     setValues((current) => ({ ...current, [event.target.name]: event.target.value }));
@@ -70,8 +73,8 @@ export default function AuthPage() {
           {mode !== "reset" && <label>Email<input required type="email" name="email" autoComplete="email" value={values.email} onChange={change} /></label>}
           {!["forgot"].includes(mode) && <label>Password<input required minLength="10" type="password" name="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={values.password} onChange={change} /></label>}
           {["signup", "reset"].includes(mode) && <label>Confirm password<input required minLength="10" type="password" name="confirm" autoComplete="new-password" value={values.confirm} onChange={change} /></label>}
-          {error && <div className="error compact" role="alert">{error}</div>}
-          {notice && <div className="success-message" role="status"><Mail size={15} />{notice}</div>}
+          <Notification message={error} type="error" onDismiss={dismissError} />
+          <Notification message={notice} onDismiss={dismissNotice} />
           <button className="button primary full" disabled={busy}>{busy ? <><LoaderCircle className="spin" size={15} /> Please wait…</> : mode === "signup" ? "Create account" : mode === "forgot" ? "Send reset link" : mode === "reset" ? "Update password" : "Sign in"}</button>
         </form>
         <div className="auth-links">
