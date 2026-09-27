@@ -1,4 +1,4 @@
-.PHONY: dev stop status observability observability-stop verify aws-lab-plan aws-lab
+.PHONY: dev stop status observability observability-stop verify
 
 dev:
 	@./dev.sh start
@@ -17,10 +17,5 @@ observability-stop:
 
 verify:
 	@PYTHONPATH=backend/src .venv/bin/python -m compileall -q backend/src
+	@PYTHONPATH=backend/src .venv/bin/python -m unittest discover -s backend/tests
 	@npm --prefix frontend run build
-
-aws-lab-plan:
-	@.venv/bin/python infraestructure/scripts/aws_lab.py plan
-
-aws-lab:
-	@.venv/bin/python infraestructure/scripts/aws_lab.py apply

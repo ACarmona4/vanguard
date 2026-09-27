@@ -29,7 +29,7 @@ locals {
   }) : ""
 }
 
-# Bucket bootstrap uses only Academy-supported S3 APIs (see aws_lab.py).
+# Bucket bootstrap uses only Academy-supported S3 APIs.
 # Retain the existing package bucket when migrating from the full S3 resource.
 removed {
   from = aws_s3_bucket.agent

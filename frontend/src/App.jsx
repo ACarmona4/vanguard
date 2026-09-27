@@ -6,6 +6,8 @@ import DashboardPage from "./dashboard/DashboardPage";
 import AccountSettingsPage from "./accounts/AccountSettingsPage";
 import CloudAccessRequired from "./accounts/CloudAccessRequired";
 import { listConnections } from "./accounts/api";
+import AuthPage from "./auth/AuthPage";
+import { useAuth } from "./auth/AuthProvider";
 
 function currentPage() {
   const page = window.location.hash.replace("#", "");
@@ -16,6 +18,7 @@ function currentPage() {
 }
 
 export default function App() {
+  const auth = useAuth();
   const [page, setPage] = useState(currentPage);
   const [cloudAccess, setCloudAccess] = useState({
     loading: true,
@@ -50,6 +53,7 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (!auth.user) return undefined;
     const navigate = () => {
       setPage(currentPage());
       verifyCloudAccess();
@@ -69,7 +73,12 @@ export default function App() {
         verifyCloudAccess,
       );
     };
-  }, []);
+  }, [auth.user?.id]);
+
+  if (auth.loading) {
+    return <main className="auth-page"><div className="cloud-access-loading" role="status">Loading Vanguard…</div></main>;
+  }
+  if (!auth.user) return <AuthPage />;
 
   const protectedPage = page !== "accounts";
   const blocked = protectedPage && !cloudAccess.loading && cloudAccess.reason;

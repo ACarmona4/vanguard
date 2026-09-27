@@ -5,8 +5,13 @@ import {
   Layers3,
   LayoutGrid,
   UserRound,
+  LogOut,
+  Moon,
+  Sun,
 } from "lucide-react";
+import { useAuth } from "../../auth/AuthProvider";
 export default function AppLayout({ children, page }) {
+  const auth = useAuth();
   const title = {
     dashboard: "Dashboard",
     inventory: "Inventory",
@@ -58,10 +63,10 @@ export default function AppLayout({ children, page }) {
           className={`sidebar-footer ${page === "accounts" ? "accounts-active" : ""}`}
           aria-current={page === "accounts" ? "page" : undefined}
         >
-          <span className="avatar">A</span>
+          <span className="avatar">{auth.user.full_name.slice(0, 1).toUpperCase()}</span>
           <div>
-            <strong>Administrator</strong>
-            <small>Cloud accounts</small>
+            <strong>{auth.user.full_name}</strong>
+            <small>{auth.user.email}</small>
           </div>
           <span className="version">v0.1</span>
         </a>
@@ -99,6 +104,21 @@ export default function AppLayout({ children, page }) {
               <UserRound size={14} /> Accounts
             </a>
           </nav>
+          <div className="topbar-actions">
+            <button
+              className="icon-button theme-toggle"
+              aria-label={`Use ${auth.user.theme === "dark" ? "light" : "dark"} mode`}
+              onClick={() => auth.updateProfile({
+                full_name: auth.user.full_name,
+                theme: auth.user.theme === "dark" ? "light" : "dark",
+              })}
+            >
+              {auth.user.theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
+            <button className="icon-button" aria-label="Sign out" onClick={auth.logout}>
+              <LogOut size={16} />
+            </button>
+          </div>
         </header>
         {children}
       </div>

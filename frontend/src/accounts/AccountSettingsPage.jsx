@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   CheckCircle2,
   Cloud,
+  FlaskConical,
   KeyRound,
   LoaderCircle,
   Pencil,
@@ -9,14 +10,20 @@ import {
   ShieldCheck,
   Trash2,
   Upload,
+  UserRound,
 } from "lucide-react";
 import {
   createConnection,
   deleteConnection,
+  deployLab,
+  destroyLab,
   listConnections,
+  listDeployments,
   updateConnection,
 } from "./api";
 import { date } from "../shared/utils/format";
+import { useAuth } from "../auth/AuthProvider";
+import { apiRequest } from "../api/client";
 
 const initialAWS = {
   name: "",
@@ -40,7 +47,9 @@ function statusName(status) {
 }
 
 export default function AccountSettingsPage() {
+  const auth = useAuth();
   const [connections, setConnections] = useState([]);
+  const [deployments, setDeployments] = useState([]);
   const [provider, setProvider] = useState("aws");
   const [aws, setAWS] = useState(initialAWS);
   const [gcp, setGCP] = useState(initialGCP);
@@ -49,10 +58,19 @@ export default function AccountSettingsPage() {
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [profile, setProfile] = useState({ full_name: auth.user.full_name, theme: auth.user.theme });
+  const [passwords, setPasswords] = useState({ current_password: "", new_password: "" });
+  const [labConnection, setLabConnection] = useState("");
+  const [labBusy, setLabBusy] = useState(false);
 
   async function load(signal) {
     try {
-      setConnections(await listConnections(signal));
+      const [savedConnections, savedDeployments] = await Promise.all([
+        listConnections(signal),
+        listDeployments(signal),
+      ]);
+      setConnections(savedConnections);
+      setDeployments(savedDeployments);
       setError("");
     } catch (failure) {
       if (failure.name !== "AbortError") setError(failure.message);
@@ -66,6 +84,71 @@ export default function AccountSettingsPage() {
     load(controller.signal);
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    setProfile({ full_name: auth.user.full_name, theme: auth.user.theme });
+  }, [auth.user.full_name, auth.user.theme]);
+
+  useEffect(() => {
+    const active = deployments.some((item) => ["queued", "deploying", "destroying"].includes(item.status));
+    if (!active) return undefined;
+    const timer = window.setInterval(() => load(), 5000);
+    return () => window.clearInterval(timer);
+  }, [deployments]);
+
+  async function saveProfile(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      await auth.updateProfile(profile);
+      setNotice("Profile preferences saved.");
+    } catch (failure) {
+      setError(failure.message);
+    }
+  }
+
+  async function changePassword(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      await apiRequest("account/password", { method: "PUT", body: JSON.stringify(passwords) });
+      setPasswords({ current_password: "", new_password: "" });
+      setNotice("Password updated. Other sessions were closed.");
+    } catch (failure) {
+      setError(failure.message);
+    }
+  }
+
+  async function createLab() {
+    if (!labConnection) return;
+    setLabBusy(true);
+    setError("");
+    try {
+      const connection = connections.find((item) => item.id === labConnection);
+      const deployment = await deployLab(labConnection, connection?.regions?.[0]);
+      setDeployments((current) => [...current.filter((item) => item.connection_id !== labConnection), deployment]);
+      setNotice("Dummy infrastructure deployment started.");
+    } catch (failure) {
+      setError(failure.message);
+    } finally {
+      setLabBusy(false);
+    }
+  }
+
+  async function removeLab(deployment) {
+    if (!window.confirm("Destroy all infrastructure created by this dummy lab?")) return;
+    setLabBusy(true);
+    setError("");
+    try {
+      const updated = await destroyLab(deployment.id);
+      setDeployments((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setNotice("Infrastructure destruction started.");
+    } catch (failure) {
+      setError(failure.message);
+    } finally {
+      setLabBusy(false);
+    }
+  }
 
   async function submit(event) {
     event.preventDefault();
@@ -186,6 +269,28 @@ export default function AccountSettingsPage() {
             Connect AWS accounts and Google Cloud projects to the inventory.
           </p>
         </div>
+      </section>
+
+      {error && <div className="error" role="alert">{error}</div>}
+      {notice && <div className="success-message" role="status"><CheckCircle2 size={15} /> {notice}</div>}
+
+      <section className="account-center-grid">
+        <form className="connection-form" onSubmit={saveProfile}>
+          <div className="form-heading"><span className="form-icon"><UserRound size={18} /></span><div><h2>Personal profile</h2><p>Your name and display preference.</p></div></div>
+          <div className="form-fields">
+            <label>Full name<input required minLength="2" value={profile.full_name} onChange={(event) => setProfile({ ...profile, full_name: event.target.value })} /></label>
+            <label>Appearance<select value={profile.theme} onChange={(event) => setProfile({ ...profile, theme: event.target.value })}><option value="light">Light</option><option value="dark">Dark</option></select></label>
+          </div>
+          <button className="button primary full account-submit">Save profile</button>
+        </form>
+        <form className="connection-form" onSubmit={changePassword}>
+          <div className="form-heading"><span className="form-icon"><KeyRound size={18} /></span><div><h2>Security</h2><p>Changing your password closes other sessions.</p></div></div>
+          <div className="form-fields">
+            <label>Current password<input required type="password" autoComplete="current-password" value={passwords.current_password} onChange={(event) => setPasswords({ ...passwords, current_password: event.target.value })} /></label>
+            <label>New password<input required minLength="10" type="password" autoComplete="new-password" value={passwords.new_password} onChange={(event) => setPasswords({ ...passwords, new_password: event.target.value })} /></label>
+          </div>
+          <button className="button full account-submit">Update password</button>
+        </form>
       </section>
 
       <section className="accounts-grid">
@@ -401,16 +506,6 @@ export default function AccountSettingsPage() {
               in the project and temporary credentials whenever possible.
             </span>
           </div>
-          {error && (
-            <div className="error compact" role="alert">
-              {error}
-            </div>
-          )}
-          {notice && (
-            <div className="success-message" role="status">
-              <CheckCircle2 size={15} /> {notice}
-            </div>
-          )}
           <div className="form-actions">
             {editingId && (
               <button type="button" className="button" onClick={cancelEdit}>
@@ -431,6 +526,31 @@ export default function AccountSettingsPage() {
             </button>
           </div>
         </form>
+      </section>
+
+      <section className="lab-panel">
+        <div className="section-heading">
+          <div><h2>Disposable infrastructure lab</h2><p className="muted">Deploy or destroy the dummy environment using a connection from this account. No terminal or local cloud credentials are required.</p></div>
+          <FlaskConical size={20} />
+        </div>
+        <div className="lab-controls">
+          <select value={labConnection} onChange={(event) => setLabConnection(event.target.value)}>
+            <option value="">Select a cloud connection</option>
+            {connections.filter((connection) => !deployments.some((item) => item.connection_id === connection.id)).map((connection) => <option key={connection.id} value={connection.id}>{connection.name} · {connection.provider.toUpperCase()}</option>)}
+          </select>
+          <button className="button primary" disabled={!labConnection || labBusy} onClick={createLab}>Deploy dummy lab</button>
+        </div>
+        <p className="security-note"><ShieldCheck size={17} /><span>This creates billable cloud resources tagged as disposable. Vanguard keeps Terraform state in your isolated account record so it can safely destroy the same resources later.</span></p>
+        <div className="connection-list">
+          {deployments.map((deployment) => {
+            const connection = connections.find((item) => item.id === deployment.connection_id);
+            return <article className="connection-card" key={deployment.id}>
+              <div className={`provider-mark ${deployment.provider}`}>{deployment.provider.toUpperCase()}</div>
+              <div className="connection-info"><div className="connection-title"><strong>{connection?.name || "Cloud lab"}</strong><span className={`connection-status ${deployment.status}`}>{deployment.status}</span></div><small>{deployment.region} · Updated {date(deployment.updated_at)}</small>{deployment.last_error && <small className="connection-error">{deployment.last_error}</small>}</div>
+              <button className="button" disabled={labBusy || ["queued", "deploying", "destroying"].includes(deployment.status)} onClick={() => removeLab(deployment)}>Destroy</button>
+            </article>;
+          })}
+        </div>
       </section>
     </main>
   );

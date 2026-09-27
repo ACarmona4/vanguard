@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import suppress
 from datetime import datetime, timezone
 from threading import Lock
@@ -18,15 +19,17 @@ from .collectors.gcp import GCPCollector
 from .database import save_resources, sync_resources
 
 logger = logging.getLogger(__name__)
-collection_run_lock = Lock()
+connection_locks: dict[str, Lock] = {}
+connection_locks_guard = Lock()
+
+
+def _connection_lock(connection_id: str) -> Lock:
+    with connection_locks_guard:
+        return connection_locks.setdefault(connection_id, Lock())
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _csv(value: str | None) -> list[str]:
-    return [item.strip() for item in (value or "").split(",") if item.strip()]
 
 
 def _enabled(value: str | None) -> bool:
@@ -83,11 +86,10 @@ class AWSCollectionScheduler:
 
     @staticmethod
     def _collect_saved_connection(database_url: str, configured: dict) -> tuple[int, int, list[str]]:
-        with collection_run_lock:
+        with _connection_lock(str(configured["id"])):
             with psycopg.connect(database_url) as connection:
-                cloud_connections.set_connection_status(
-                    connection, str(configured["id"]), status="syncing"
-                )
+                if not cloud_connections.claim_sync(connection, str(configured["id"])):
+                    return 0, 0, []
             credentials = decrypt_credentials(configured["encrypted_credentials"])
             if configured["provider"] == "aws":
                 collector = AWSCollector(
@@ -99,6 +101,8 @@ class AWSCollectionScheduler:
                     "provider": "aws",
                     "scope_id": configured["scope_id"],
                     "regions": configured["regions"],
+                    "owner_id": str(configured["owner_id"]),
+                    "connection_id": str(configured["id"]),
                 }
             else:
                 collector = GCPCollector(
@@ -109,9 +113,16 @@ class AWSCollectionScheduler:
                 sync_options = {
                     "provider": "gcp",
                     "scope_id": configured["scope_id"],
+                    "owner_id": str(configured["owner_id"]),
+                    "connection_id": str(configured["id"]),
                 }
             if result.errors:
-                saved = save_resources(database_url, result.resources)
+                saved = save_resources(
+                    database_url,
+                    result.resources,
+                    owner_id=str(configured["owner_id"]),
+                    connection_id=str(configured["id"]),
+                )
                 deleted = 0
                 connection_status = "partial"
             else:
@@ -132,6 +143,7 @@ class AWSCollectionScheduler:
         with psycopg.connect(database_url) as connection:
             cloud_connections.ensure_table(connection)
             configured = cloud_connections.list_connections(connection, enabled_only=True)
+            configured = [item for item in configured if item["owner_id"] is not None]
             configured = [
                 cloud_connections.get_connection(
                     connection, str(item["id"]), include_credentials=True
@@ -144,22 +156,31 @@ class AWSCollectionScheduler:
         saved_total = 0
         deleted_total = 0
         errors: list[str] = []
-        for item in configured:
-            try:
-                saved, deleted, item_errors = cls._collect_saved_connection(database_url, item)
-                saved_total += saved
-                deleted_total += deleted
-                errors.extend(f"{item['name']}: {error}" for error in item_errors)
-            except Exception as exc:
-                message = f"{item['name']}: {type(exc).__name__}: {exc}"
-                errors.append(message)
-                with psycopg.connect(database_url) as connection:
-                    cloud_connections.set_connection_status(
-                        connection,
-                        str(item["id"]),
-                        status="error",
-                        error=f"{type(exc).__name__}: {exc}",
-                    )
+        workers = min(8, len(configured))
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cloud-collector") as executor:
+            futures = {
+                executor.submit(cls._collect_saved_connection, database_url, item): item
+                for item in configured
+            }
+            for future in as_completed(futures):
+                item = futures[future]
+                try:
+                    saved, deleted, item_errors = future.result()
+                    saved_total += saved
+                    deleted_total += deleted
+                    errors.extend(f"{item['name']}: {error}" for error in item_errors)
+                except Exception as exc:
+                    logger.warning("Collection failed for connection %s: %s", item["id"], type(exc).__name__)
+                    safe_error = f"{type(exc).__name__}: synchronization failed; check permissions and expiration"
+                    message = f"{item['name']}: {safe_error}"
+                    errors.append(message)
+                    with psycopg.connect(database_url) as connection:
+                        cloud_connections.set_connection_status(
+                            connection,
+                            str(item["id"]),
+                            status="error",
+                            error=safe_error,
+                        )
         return saved_total, deleted_total, errors
 
     @classmethod
@@ -169,30 +190,9 @@ class AWSCollectionScheduler:
             raise RuntimeError("DATABASE_URL is not configured")
 
         configured_result = cls._collect_configured(database_url)
-        if configured_result is not None:
-            return configured_result
-
-        collector = AWSCollector(
-            profile=os.getenv("AWS_PROFILE") or None,
-            regions=_csv(
-                os.getenv("AWS_REGIONS")
-                or os.getenv("AWS_DEFAULT_REGION")
-                or os.getenv("AWS_REGION")
-            ),
-        )
-        result = collector.collect()
-        if result.errors:
-            saved = save_resources(database_url, result.resources)
-            deleted = 0
-        else:
-            saved, deleted = sync_resources(
-                database_url,
-                result.resources,
-                provider="aws",
-                scope_id=collector.account_id,
-                regions=collector.regions,
-            )
-        return saved, deleted, result.errors
+        # Cloud credentials must always originate from an authenticated user's
+        # saved connection. Never fall back to shell profiles or environment keys.
+        return configured_result or (0, 0, [])
 
     async def collect_once(self) -> None:
         self._set_state(

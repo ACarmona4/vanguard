@@ -4,30 +4,21 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
 
 
-KEY_PATH = Path(".vanguard/credentials.key")
-
-
 def _cipher() -> Fernet:
-    path = Path(os.getenv("VANGUARD_CREDENTIAL_KEY_FILE", KEY_PATH)).expanduser()
-    path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        pass
-    else:
-        with os.fdopen(descriptor, "wb") as key_file:
-            key_file.write(Fernet.generate_key())
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
-    return Fernet(path.read_bytes().strip())
+        return Fernet(os.environ["VANGUARD_MASTER_KEY"].encode())
+    except KeyError as exc:
+        raise RuntimeError(
+            "Credential encryption is not configured. Provide VANGUARD_MASTER_KEY "
+            "through the deployment secret manager, never in .env."
+        ) from exc
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("VANGUARD_MASTER_KEY is invalid") from exc
 
 
 def encrypt_credentials(credentials: dict[str, Any]) -> str:

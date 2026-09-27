@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { apiRequest } from "../api/client";
 
 export function useUtilization(path, filters = {}) {
   const query = new URLSearchParams(
@@ -13,16 +14,9 @@ export function useUtilization(path, filters = {}) {
     setState({ data: null, error: "", loading: true });
     async function load() {
       try {
-        const response = await fetch(`/api/utilization${path}?${query}`, {
+        const body = await apiRequest(`utilization${path}?${query}`, {
           signal: controller.signal,
         });
-        const body = await response.json();
-        if (!response.ok)
-          throw new Error(
-            typeof body.detail === "string"
-              ? body.detail
-              : "Metrics could not be retrieved.",
-          );
         if (!controller.signal.aborted)
           setState({ data: body, error: "", loading: false });
       } catch (error) {

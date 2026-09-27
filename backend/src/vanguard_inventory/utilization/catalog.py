@@ -88,7 +88,10 @@ def metrics_for(resource: dict) -> tuple[Metric, ...]:
 
 
 def identity(resource: dict) -> tuple[str, ...]:
-    return tuple(str(resource.get(key) or "") for key in ("provider", "scope_id", "region", "resource_type", "resource_id"))
+    return tuple(
+        str(resource.get(key) or "")
+        for key in ("owner_id", "provider", "scope_id", "region", "resource_type", "resource_id")
+    )
 
 
-IDENTITY_LABELS = ("provider", "scope_id", "region", "resource_type", "resource_id")
+IDENTITY_LABELS = ("owner_id", "provider", "scope_id", "region", "resource_type", "resource_id")

@@ -5,13 +5,14 @@ from psycopg import Connection, sql
 from .schemas import InventorySummary, ResourceFilters, ResourcePage, ResourceQuery
 
 
-def _where(filters: ResourceFilters) -> tuple[sql.Composed, dict]:
+def _where(filters: ResourceFilters, owner_id: str) -> tuple[sql.Composed, dict]:
     values = {
         field: getattr(filters, field)
         for field in ResourceFilters.model_fields
         if getattr(filters, field) is not None
         and not (field == "provider" and filters.provider == "all")
     }
+    values["owner_id"] = owner_id
     clauses = [
         sql.SQL("{} = {}").format(sql.Identifier(field), sql.Placeholder(field))
         for field in values
@@ -19,8 +20,8 @@ def _where(filters: ResourceFilters) -> tuple[sql.Composed, dict]:
     return (sql.SQL(" AND ").join(clauses) if clauses else sql.SQL("TRUE")), values
 
 
-def list_resources(connection: Connection, query: ResourceQuery) -> ResourcePage:
-    where, values = _where(query)
+def list_resources(connection: Connection, query: ResourceQuery, owner_id: str) -> ResourcePage:
+    where, values = _where(query, owner_id)
     total = connection.execute(
         sql.SQL("SELECT count(*) AS total FROM inventory_resources WHERE {}").format(where),
         values,
@@ -38,8 +39,8 @@ def list_resources(connection: Connection, query: ResourceQuery) -> ResourcePage
     return ResourcePage(items=rows, total=total, limit=query.limit, offset=query.offset)
 
 
-def summarize_resources(connection: Connection, filters: ResourceFilters) -> InventorySummary:
-    where, values = _where(filters)
+def summarize_resources(connection: Connection, filters: ResourceFilters, owner_id: str) -> InventorySummary:
+    where, values = _where(filters, owner_id)
     # One aggregation keeps totals and all three breakdowns consistent.
     rows = connection.execute(
         sql.SQL("""

@@ -6,6 +6,52 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+EMAIL_PATTERN = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
+
+
+class SignUpRequest(BaseModel):
+    full_name: str = Field(min_length=2, max_length=120)
+    email: str = Field(min_length=3, max_length=254, pattern=EMAIL_PATTERN)
+    password: str = Field(min_length=10, max_length=256)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254, pattern=EMAIL_PATTERN)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254, pattern=EMAIL_PATTERN)
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
+    password: str = Field(min_length=10, max_length=256)
+
+
+class UserProfileUpdate(BaseModel):
+    full_name: str = Field(min_length=2, max_length=120)
+    theme: Literal["light", "dark"]
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=10, max_length=256)
+
+
+class UserResponse(BaseModel):
+    id: UUID
+    email: str
+    full_name: str
+    theme: Literal["light", "dark"]
+    created_at: datetime
+    updated_at: datetime
+
+
+class AuthResponse(BaseModel):
+    user: UserResponse
+    csrf_token: str
+
 
 class ResourceFilters(BaseModel):
     provider: Literal["aws", "gcp", "all"] = "aws"
@@ -107,5 +153,22 @@ class CloudConnectionResponse(BaseModel):
     last_error: str | None
     last_tested_at: datetime | None
     last_synced_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class LabDeploymentCreate(BaseModel):
+    connection_id: UUID
+    region: str | None = Field(default=None, min_length=3, max_length=64)
+
+
+class LabDeploymentResponse(BaseModel):
+    id: UUID
+    connection_id: UUID
+    provider: Literal["aws", "gcp"]
+    region: str
+    status: Literal["queued", "deploying", "active", "destroying", "error"]
+    outputs: dict[str, Any]
+    last_error: str | None
     created_at: datetime
     updated_at: datetime
