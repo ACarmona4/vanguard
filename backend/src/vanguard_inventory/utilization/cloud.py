@@ -30,7 +30,7 @@ def aws_samples(resources, credentials, now):
         for metric in metrics:
             if metric.cloud_name:
                 regional[resource["region"]].append((resource, metric, {
-                    "Metric": {"Namespace": metric.namespace or namespace, "MetricName": metric.cloud_name,
+                    "Metric": {"Namespace": namespace, "MetricName": metric.cloud_name,
                                "Dimensions": [{"Name": dimension, "Value": identifier}]},
                     "Period": 300, "Stat": metric.statistic,
                 }))
@@ -78,8 +78,6 @@ def gcp_samples(resources, credentials, now):
             project = matching[0]["scope_id"]
             indexed = {_gcp_identifier(r): r for r in matching}
             for metric in metrics:
-                if metric.agent:
-                    continue
                 params = {
                     "filter": f'metric.type = "{metric.cloud_name}" AND resource.type = "{monitored_type}"',
                     "interval.startTime": (now - timedelta(minutes=20)).isoformat(),

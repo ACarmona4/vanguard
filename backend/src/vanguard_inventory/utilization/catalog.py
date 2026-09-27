@@ -11,19 +11,13 @@ class Metric:
     cloud_name: str = ""
     statistic: str = "Average"
     scale: float = 1
-    agent: bool = False
-    namespace: str | None = None
 
 
 CPU = Metric("cpu_percent", "CPU", "%", "CPUUtilization")
-MEMORY = Metric("memory_percent", "Memory", "%", agent=True)
-FILESYSTEM = Metric("filesystem_percent", "File system (maximum)", "%", agent=True)
 
 AWS = {
     "ec2_instance": ("AWS/EC2", "InstanceId", (
         CPU,
-        Metric("memory_percent", "Memory", "%", "MemoryUsedPercent", agent=True, namespace="Vanguard/HostMetrics"),
-        Metric("filesystem_percent", "File system (maximum)", "%", "FilesystemUsedPercent", "Maximum", agent=True, namespace="Vanguard/HostMetrics"),
         Metric("network_in_bytes_per_second", "Network in", "B/s", "NetworkIn", "Sum", 1 / 300),
         Metric("network_out_bytes_per_second", "Network out", "B/s", "NetworkOut", "Sum", 1 / 300),
         Metric("disk_read_bytes_per_second", "Local disk read", "B/s", "DiskReadBytes", "Sum", 1 / 300),
@@ -52,7 +46,6 @@ AWS = {
 GCP = {
     "compute_instance": ("gce_instance", "instance_id", (
         Metric("cpu_percent", "CPU", "%", "compute.googleapis.com/instance/cpu/utilization", scale=100),
-        MEMORY, FILESYSTEM,
         Metric("network_in_bytes_per_second", "Network in", "B/s", "compute.googleapis.com/instance/network/received_bytes_count", "rate"),
         Metric("network_out_bytes_per_second", "Network out", "B/s", "compute.googleapis.com/instance/network/sent_bytes_count", "rate"),
         Metric("disk_read_bytes_per_second", "Disk read", "B/s", "compute.googleapis.com/instance/disk/read_bytes_count", "rate"),

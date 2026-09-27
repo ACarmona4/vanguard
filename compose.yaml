@@ -33,7 +33,6 @@ services:
       - --storage.tsdb.retention.time=15d
     volumes:
       - ./observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
-      - ./observability/host-rules.yaml:/etc/prometheus/host-rules.yaml:ro
       - vanguard-prometheus:/prometheus
     ports:
       - "127.0.0.1:9090:9090"
@@ -44,4 +43,3 @@ services:
 volumes:
   vanguard-prometheus:
   vanguard-postgres:
-

@@ -23,11 +23,7 @@ function MetricStatus({ metric }) {
         ? date(metric.observed_at)
         : metric.status === "stale"
           ? `Stale data · ${date(metric.observed_at)}`
-          : metric.automatically_managed
-            ? "Automatic agent: waiting for metrics"
-            : metric.requires_agent
-              ? "Requires an agent on the VM"
-              : "No data published"}
+          : "No data published"}
     </span>
   );
 }
@@ -184,9 +180,10 @@ export default function UtilizationPage() {
         </div>
       </section>
       <p className="utilization-notice">
-        Compatible resources only. CPU, memory, and disk are shown where
-        applicable; queues and managed databases have their own metrics. Cloud
-        samples may take several minutes to appear.
+        Provider-native metrics only; Vanguard does not install software on
+        your infrastructure. Virtual machines expose CPU, network and I/O;
+        managed services show the metrics their cloud API provides. Samples may
+        take several minutes to appear.
       </p>
       <div className="filters">
         <Filter

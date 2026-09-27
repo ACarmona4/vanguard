@@ -59,16 +59,13 @@ def describe(resources, series, *, history=False, now=None):
         for definition in metrics_for(resource):
             points = sorted(indexed.get((identity(resource), definition.key), {}).items())
             latest = points[-1] if points else None
-            fresh = latest is not None and 0 <= now - latest[0] <= (120 if definition.agent and not definition.namespace else FRESH_SECONDS)
+            fresh = latest is not None and 0 <= now - latest[0] <= FRESH_SECONDS
             metrics.append({
                 "key": definition.key, "label": definition.label, "unit": definition.unit,
                 "value": latest[1] if fresh else None,
                 "last_value": latest[1] if latest else None,
                 "observed_at": datetime.fromtimestamp(latest[0], timezone.utc).isoformat() if latest else None,
                 "status": "ok" if fresh else "stale" if latest else "no_data",
-                "requires_agent": definition.agent,
-                "automatically_managed": definition.agent and resource["provider"] == "aws"
-                    and resource.get("attributes", {}).get("tags", {}).get("VanguardAgent") == "managed",
                 "points": [[timestamp * 1000, value] for timestamp, value in points] if history else [],
             })
         result.append({**{key: resource.get(key) for key in ("id", "name", *IDENTITY_LABELS)}, "metrics": metrics})

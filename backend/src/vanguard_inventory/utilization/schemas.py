@@ -29,8 +29,6 @@ class MetricReading(BaseModel):
     last_value: float | None
     observed_at: datetime | None
     status: Literal["ok", "stale", "no_data"]
-    requires_agent: bool
-    automatically_managed: bool = False
     points: list[tuple[float, float]]
 
 
