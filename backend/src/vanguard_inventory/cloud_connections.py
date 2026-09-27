@@ -108,15 +108,15 @@ def update_connection(
     ).fetchone()
     if not configured:
         return None
-    if configured[0] == "aws":
-        removed_regions = list(set(configured[2]) - set(regions))
+    if configured["provider"] == "aws":
+        removed_regions = list(set(configured["regions"]) - set(regions))
         if removed_regions:
             connection.execute(
                 """
                 DELETE FROM inventory_resources
                 WHERE provider = 'aws' AND scope_id = %s AND region = ANY(%s::text[])
                 """,
-                (configured[1], removed_regions),
+                (configured["scope_id"], removed_regions),
             )
     with connection.cursor(row_factory=dict_row) as cursor:
         row = cursor.execute(
@@ -153,7 +153,7 @@ def delete_connection(connection, connection_id: str) -> bool:
         return False
     connection.execute(
         "DELETE FROM inventory_resources WHERE provider = %s AND scope_id = %s",
-        (configured[0], configured[1]),
+        (configured["provider"], configured["scope_id"]),
     )
     result = connection.execute(
         "DELETE FROM cloud_connections WHERE id = %s", (connection_id,)

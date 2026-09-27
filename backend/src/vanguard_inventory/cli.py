@@ -15,10 +15,10 @@ def _csv(value: str | None) -> list[str]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Inventario multi-cloud de Vanguard")
+    parser = argparse.ArgumentParser(description="Vanguard multicloud inventory")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    collect = subparsers.add_parser("collect", help="Recolectar recursos")
+    collect = subparsers.add_parser("collect", help="Collect resources")
     collect.add_argument("provider", choices=("gcp", "aws"))
     collect.add_argument("--project-id", default=os.getenv("GCP_PROJECT_ID"))
     collect.add_argument("--profile", default=os.getenv("AWS_PROFILE") or None)
@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("--output-dir", type=Path, default=Path("snapshots"))
     collect.add_argument("--no-snapshot", action="store_true")
 
-    check = subparsers.add_parser("check", help="Validar credenciales y conectividad")
+    check = subparsers.add_parser("check", help="Validate credentials and connectivity")
     check.add_argument("provider", choices=("gcp", "aws", "database"))
     check.add_argument("--project-id", default=os.getenv("GCP_PROJECT_ID"))
     check.add_argument("--profile", default=os.getenv("AWS_PROFILE") or None)
@@ -52,7 +52,7 @@ def _collect(args: argparse.Namespace) -> int:
         from .collectors.aws import AWSCollector
         result = AWSCollector(args.profile, _csv(args.regions)).collect()
 
-    print(f"Recursos recolectados: {len(result.resources)}")
+    print(f"Resources collected: {len(result.resources)}")
     if not args.no_snapshot:
         path = write_snapshot(result, args.provider, args.output_dir)
         print(f"Snapshot: {path}")
@@ -75,11 +75,11 @@ def _collect(args: argparse.Namespace) -> int:
                 provider="gcp",
                 scope_id=args.project_id,
             )
-        print(f"Recursos guardados/actualizados en PostgreSQL: {saved}")
+        print(f"Resources saved/updated in PostgreSQL: {saved}")
         if not result.errors:
-            print(f"Recursos eliminados de PostgreSQL: {deleted}")
+            print(f"Resources deleted from PostgreSQL: {deleted}")
     else:
-        print("PostgreSQL omitido: DATABASE_URL no está configurada")
+        print("PostgreSQL skipped: DATABASE_URL is not configured")
     for error in result.errors:
         print(f"ERROR: {error}", file=sys.stderr)
     return 2 if result.errors else 0

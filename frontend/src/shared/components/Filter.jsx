@@ -9,7 +9,7 @@ export default function Filter({
     <label className="filter">
       <span>{label}</span>
       <select value={value} onChange={(event) => onChange(event.target.value)}>
-        <option value="">Todos</option>
+        <option value="">All</option>
         {options
           .filter((item) => item.value != null)
           .map((item) => (

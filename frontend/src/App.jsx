@@ -78,7 +78,7 @@ export default function App() {
       {protectedPage && cloudAccess.loading ? (
         <main className="cloud-access-page">
           <div className="cloud-access-loading" role="status">
-            Verificando conexiones cloud…
+            Verifying cloud connections…
           </div>
         </main>
       ) : blocked ? (

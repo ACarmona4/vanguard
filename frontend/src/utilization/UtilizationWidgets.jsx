@@ -4,34 +4,31 @@ export default function UtilizationWidgets() {
   const { data, loading, error } = useUtilization("/summary");
   const cards = [
     [
-      "Recursos con métricas",
+      "Resources with metrics",
       data ? `${data.monitored} / ${data.eligible}` : "—",
-      "Con al menos una muestra reciente",
+      "With at least one recent sample",
     ],
     [
-      "CPU promedio",
+      "Average CPU",
       metricValue(data?.cpu_average, "%"),
-      `Media por recurso · ${data?.cpu_samples ?? 0} con datos`,
+      `Average per resource · ${data?.cpu_samples ?? 0} with data`,
     ],
     [
-      "Memoria promedio",
+      "Average memory",
       metricValue(data?.memory_average, "%"),
-      `Media por recurso · ${data?.memory_samples ?? 0} con datos`,
+      `Average per resource · ${data?.memory_samples ?? 0} with data`,
     ],
     [
-      "Utilización alta",
+      "High utilization",
       data?.high_utilization ?? "—",
-      "CPU, memoria o disco ≥ 80 %",
+      "CPU, memory, or disk ≥ 80%",
     ],
   ];
   return (
-    <section
-      className="utilization-summary"
-      aria-label="Resumen de utilización"
-    >
+    <section className="utilization-summary" aria-label="Utilization summary">
       <div className="utilization-title">
-        <h2>Utilización</h2>
-        <a href="#utilization">Ver utilización →</a>
+        <h2>Utilization</h2>
+        <a href="#utilization">View utilization →</a>
       </div>
       {error && (
         <p className="error" role="alert">
@@ -40,8 +37,7 @@ export default function UtilizationWidgets() {
       )}
       {data?.collection?.errors?.length > 0 && (
         <p className="utilization-notice" role="status">
-          La recolección de métricas es parcial. Consulta los detalles en
-          Utilización.
+          Metric collection is partial. See the details under Utilization.
         </p>
       )}
       <div className="metrics utilization-metrics">

@@ -40,7 +40,7 @@ def decrypt_credentials(value: str) -> dict[str, Any]:
         payload = _cipher().decrypt(value.encode())
         return json.loads(payload)
     except (InvalidToken, ValueError, json.JSONDecodeError) as exc:
-        raise ValueError("No fue posible descifrar las credenciales guardadas") from exc
+        raise ValueError("The saved credentials could not be decrypted") from exc
 
 
 def validate_aws(credentials: dict[str, str], regions: list[str]) -> dict[str, str]:
@@ -73,13 +73,13 @@ def validate_gcp(credentials: dict[str, Any], project_id: str) -> dict[str, str]
     from google.cloud import resourcemanager_v3
 
     if credentials.get("type") != "service_account":
-        raise ValueError("El JSON debe contener una cuenta de servicio de GCP")
+        raise ValueError("The JSON must contain a GCP service account")
     google_credentials = gcp_credentials(credentials)
     project = resourcemanager_v3.ProjectsClient(
         credentials=google_credentials
     ).get_project(name=f"projects/{project_id}")
     return {
         "scope_id": project.project_id,
-        "identity": credentials.get("client_email", "Cuenta de servicio"),
-        "credential_hint": credentials.get("client_email", "Cuenta de servicio"),
+        "identity": credentials.get("client_email", "Service account"),
+        "credential_hint": credentials.get("client_email", "Service account"),
     }

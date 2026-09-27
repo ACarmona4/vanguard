@@ -51,10 +51,10 @@ def aws_samples(resources, credentials, now):
                 for page in pages:
                     for result in page.get("MetricDataResults", []):
                         if result.get("StatusCode") not in {"Complete", "PartialData"}:
-                            errors.append(f"AWS {region}: métrica no disponible")
+                            errors.append(f"AWS {region}: metric unavailable")
                             continue
                         if result.get("StatusCode") == "PartialData":
-                            errors.append(f"AWS {region}: datos parciales")
+                            errors.append(f"AWS {region}: partial data")
                         for timestamp, value in zip(result.get("Timestamps", []), result.get("Values", [])):
                             previous = latest.get(result["Id"])
                             if previous is None or timestamp > previous[0]:
@@ -63,7 +63,7 @@ def aws_samples(resources, credentials, now):
                     resource, metric, _ = batch[int(key[1:])]
                     samples.append((resource, metric, timestamp.timestamp(), value * metric.scale))
             except Exception as exc:
-                errors.append(f"AWS {region}: {type(exc).__name__}; revisa cloudwatch:GetMetricData")
+                errors.append(f"AWS {region}: {type(exc).__name__}; check cloudwatch:GetMetricData")
     return samples, errors
 
 

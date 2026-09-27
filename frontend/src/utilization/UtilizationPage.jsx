@@ -22,12 +22,12 @@ function MetricStatus({ metric }) {
       {metric.status === "ok"
         ? date(metric.observed_at)
         : metric.status === "stale"
-          ? `Dato antiguo · ${date(metric.observed_at)}`
+          ? `Stale data · ${date(metric.observed_at)}`
           : metric.automatically_managed
-            ? "Agente automático: esperando métricas"
+            ? "Automatic agent: waiting for metrics"
             : metric.requires_agent
-            ? "Requiere agente en la VM"
-            : "Sin datos publicados"}
+              ? "Requires an agent on the VM"
+              : "No data published"}
     </span>
   );
 }
@@ -35,7 +35,7 @@ function MetricStatus({ metric }) {
 function HistoryChart({ metric }) {
   const points = metric.points;
   if (!points.length)
-    return <p className="muted">Sin muestras en este período.</p>;
+    return <p className="muted">No samples in this period.</p>;
   const minTime = points[0][0];
   const duration = Math.max(points.at(-1)[0] - minTime, 1);
   const maximum = Math.max(...points.map(([, value]) => value));
@@ -56,7 +56,7 @@ function HistoryChart({ metric }) {
         className="utilization-chart"
         viewBox="0 0 500 115"
         role="img"
-        aria-label={`${metric.label}: ${points.length} muestras, máximo ${metricValue(maximum, metric.unit)}`}
+        aria-label={`${metric.label}: ${points.length} samples, maximum ${metricValue(maximum, metric.unit)}`}
       >
         <line x1="10" y1="100" x2="490" y2="100" stroke="#e5e7eb" />
         {segments.map((segment, index) =>
@@ -81,7 +81,7 @@ function HistoryChart({ metric }) {
       </svg>
       <div className="chart-caption">
         <span>{date(minTime)}</span>
-        <span>Máx. {metricValue(maximum, metric.unit)}</span>
+        <span>Max. {metricValue(maximum, metric.unit)}</span>
         <span>{date(points.at(-1)[0])}</span>
       </div>
     </>
@@ -92,22 +92,22 @@ function ResourceHistory({ id, onClose }) {
   const [hours, setHours] = useState("1");
   const { data, error, loading } = useUtilization(`/${id}`, { hours });
   return (
-    <section className="utilization-history" aria-label="Historial del recurso">
+    <section className="utilization-history" aria-label="Resource history">
       <div className="utilization-title">
-        <h2>{data?.name || "Historial del recurso"}</h2>
+        <h2>{data?.name || "Resource history"}</h2>
         <button className="button" onClick={onClose}>
-          Cerrar historial
+          Close history
         </button>
       </div>
       <label className="filter">
-        <span>Período</span>
+        <span>Period</span>
         <select
           value={hours}
           onChange={(event) => setHours(event.target.value)}
         >
-          <option value="1">Última hora</option>
-          <option value="6">Últimas 6 horas</option>
-          <option value="24">Últimas 24 horas</option>
+          <option value="1">Last hour</option>
+          <option value="6">Last 6 hours</option>
+          <option value="24">Last 24 hours</option>
         </select>
       </label>
       {error && (
@@ -115,7 +115,7 @@ function ResourceHistory({ id, onClose }) {
           {error}
         </p>
       )}
-      {loading && <p role="status">Consultando historial…</p>}
+      {loading && <p role="status">Loading history…</p>}
       <div className="utilization-chart-grid">
         {data?.metrics.map((metric) => (
           <article className="metric" key={metric.key}>
@@ -126,13 +126,13 @@ function ResourceHistory({ id, onClose }) {
             <MetricStatus metric={metric} />
             <HistoryChart metric={metric} />
             <details>
-              <summary>Ver muestras</summary>
+              <summary>View samples</summary>
               <div className="utilization-samples">
                 <table>
                   <thead>
                     <tr>
-                      <th>Fecha</th>
-                      <th>Valor</th>
+                      <th>Date</th>
+                      <th>Value</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -179,60 +179,58 @@ export default function UtilizationPage() {
     <main>
       <section className="page-heading">
         <div>
-          <h1>Utilización</h1>
-          <p>Métricas reales de tus máquinas y servicios cloud.</p>
+          <h1>Utilization</h1>
+          <p>Real metrics from your cloud machines and services.</p>
         </div>
       </section>
       <p className="utilization-notice">
-        Solo recursos compatibles. CPU, memoria y disco se muestran donde
-        aplican; las colas y bases administradas tienen métricas propias. Las
-        muestras cloud pueden tardar varios minutos.
+        Compatible resources only. CPU, memory, and disk are shown where
+        applicable; queues and managed databases have their own metrics. Cloud
+        samples may take several minutes to appear.
       </p>
       <div className="filters">
         <Filter
-          label="Nube"
+          label="Cloud"
           value={filters.provider === "all" ? "" : filters.provider}
           options={[{ value: "aws" }, { value: "gcp" }]}
           format={(value) => value.toUpperCase()}
           onChange={(value) => change("provider", value)}
         />
         <Filter
-          label="Tipo"
+          label="Type"
           value={filters.resource_type}
           options={resourceTypes.map((value) => ({ value }))}
           format={typeName}
           onChange={(value) => change("resource_type", value)}
         />
         <label className="filter">
-          <span>Cuenta / proyecto</span>
+          <span>Account / project</span>
           <input
             value={filters.scope_id}
-            placeholder="Todos"
+            placeholder="All"
             onChange={(event) => change("scope_id", event.target.value)}
           />
         </label>
         <label className="filter">
-          <span>Región</span>
+          <span>Region</span>
           <input
             value={filters.region}
-            placeholder="Todas"
+            placeholder="All"
             onChange={(event) => change("region", event.target.value)}
           />
         </label>
       </div>
       {error && (
         <p className="error" role="alert">
-          {error} Se reintentará automáticamente.
+          {error} We will retry automatically.
         </p>
       )}
       {data?.collection?.status === "disabled" && (
-        <p className="utilization-notice">
-          La recolección de métricas está desactivada.
-        </p>
+        <p className="utilization-notice">Metric collection is disabled.</p>
       )}
       {data?.collection?.errors?.length > 0 && (
         <div className="error" role="alert">
-          <strong>Recolección parcial</strong>
+          <strong>Partial collection</strong>
           <ul>
             {data.collection.errors.map((message, index) => (
               <li key={index}>{message}</li>
@@ -240,19 +238,19 @@ export default function UtilizationPage() {
           </ul>
         </div>
       )}
-      {loading && <p role="status">Consultando utilización…</p>}
+      {loading && <p role="status">Loading utilization…</p>}
       {data && (
         <p className="muted">
           {data.total}{" "}
-          {data.total === 1 ? "recurso compatible" : "recursos compatibles"} ·
-          Última consulta cloud: {date(data.collection.last_finished_at)} ·
-          Actualización cada minuto
+          {data.total === 1 ? "compatible resource" : "compatible resources"} ·
+          Last cloud query: {date(data.collection.last_finished_at)} · Updated
+          every minute
         </p>
       )}
       {data?.items.length === 0 && (
         <div className="empty-state">
-          <h3>No hay recursos compatibles</h3>
-          <p>Ajusta los filtros o espera la sincronización del inventario.</p>
+          <h3>No compatible resources</h3>
+          <p>Adjust the filters or wait for the inventory to sync.</p>
         </div>
       )}
       <div className="utilization-resources">
@@ -274,7 +272,7 @@ export default function UtilizationPage() {
                   setSelected(selected === resource.id ? null : resource.id)
                 }
               >
-                Ver historial
+                View history
               </button>
             </div>
             <div className="utilization-values">
@@ -307,7 +305,7 @@ export default function UtilizationPage() {
       {data && data.total > 20 && (
         <div className="table-footer">
           <span>
-            {offset + 1}–{Math.min(offset + 20, data.total)} de {data.total}
+            {offset + 1}–{Math.min(offset + 20, data.total)} of {data.total}
           </span>
           <div className="pagination">
             <button
@@ -317,7 +315,7 @@ export default function UtilizationPage() {
                 setSelected(null);
               }}
             >
-              Anterior
+              Previous
             </button>
             <button
               disabled={offset + 20 >= data.total}
@@ -326,7 +324,7 @@ export default function UtilizationPage() {
                 setSelected(null);
               }}
             >
-              Siguiente
+              Next
             </button>
           </div>
         </div>

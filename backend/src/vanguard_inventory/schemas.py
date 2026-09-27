@@ -80,7 +80,7 @@ class AWSConnectionCreate(BaseModel):
     def normalize_regions(cls, value: list[str]) -> list[str]:
         regions = list(dict.fromkeys(region.strip() for region in value if region.strip()))
         if not regions:
-            raise ValueError("Debes seleccionar al menos una región")
+            raise ValueError("You must select at least one region")
         return regions
 
 

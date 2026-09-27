@@ -33,7 +33,7 @@ def query_series(resources, minutes=30):
             raise ValueError("Invalid metric response")
         return body["data"]["result"]
     except Exception as exc:
-        raise MetricsUnavailable("Prometheus no está disponible. Inicia el servicio de observabilidad.") from exc
+        raise MetricsUnavailable("Prometheus is unavailable. Start the observability service.") from exc
 
 
 def indexed_series(series):

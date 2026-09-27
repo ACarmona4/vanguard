@@ -9,9 +9,9 @@ import {
 export default function AppLayout({ children, page }) {
   const title = {
     dashboard: "Dashboard",
-    inventory: "Inventario",
-    profile: "Perfil",
-    utilization: "Utilización",
+    inventory: "Inventory",
+    profile: "Profile",
+    utilization: "Utilization",
   }[page];
   return (
     <div className="app-shell">
@@ -26,7 +26,7 @@ export default function AppLayout({ children, page }) {
           </span>
           <div>
             <strong>Vanguard</strong>
-            <small>Gestión cloud</small>
+            <small>Cloud management</small>
           </div>
         </div>
         <div className="nav-label">GENERAL</div>
@@ -43,14 +43,14 @@ export default function AppLayout({ children, page }) {
             aria-current={page === "inventory" ? "page" : undefined}
             href="#inventory"
           >
-            <Box size={18} /> Inventario
+            <Box size={18} /> Inventory
           </a>
           <a
             href="#utilization"
             className={page === "utilization" ? "nav-active" : ""}
             aria-current={page === "utilization" ? "page" : undefined}
           >
-            <Activity size={18} /> Utilización
+            <Activity size={18} /> Utilization
           </a>
         </nav>
         <a
@@ -60,8 +60,8 @@ export default function AppLayout({ children, page }) {
         >
           <span className="avatar">A</span>
           <div>
-            <strong>Administrador</strong>
-            <small>Perfil y conexiones</small>
+            <strong>Administrator</strong>
+            <small>Profile and connections</small>
           </div>
           <span className="version">v0.1</span>
         </a>
@@ -73,7 +73,7 @@ export default function AppLayout({ children, page }) {
             General <ChevronRight size={13} />
             <strong>{title}</strong>
           </div>
-          <nav className="mobile-nav" aria-label="Navegación principal">
+          <nav className="mobile-nav" aria-label="Main navigation">
             <a
               href="#dashboard"
               aria-current={page === "dashboard" ? "page" : undefined}
@@ -84,19 +84,19 @@ export default function AppLayout({ children, page }) {
               href="#inventory"
               aria-current={page === "inventory" ? "page" : undefined}
             >
-              Inventario
+              Inventory
             </a>
             <a
               href="#utilization"
               aria-current={page === "utilization" ? "page" : undefined}
             >
-              Utilización
+              Utilization
             </a>
             <a
               href="#profile"
               aria-current={page === "profile" ? "page" : undefined}
             >
-              <UserRound size={14} /> Perfil
+              <UserRound size={14} /> Profile
             </a>
           </nav>
         </header>

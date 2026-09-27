@@ -19,11 +19,11 @@ export default function ResourceDetails({ resource, onClose }) {
     >
       <section className="detail-panel">
         <div className="section-heading">
-          <span className="eyebrow">DETALLE DEL RECURSO</span>
+          <span className="eyebrow">RESOURCE DETAILS</span>
           <button
             className="icon-button"
             onClick={onClose}
-            aria-label="Cerrar detalle"
+            aria-label="Close details"
           >
             <X size={20} />
           </button>
@@ -37,26 +37,26 @@ export default function ResourceDetails({ resource, onClose }) {
         <p className="mono detail-id">{resource.resource_id}</p>
         <dl>
           {[
-            ["Nube", resource.provider.toUpperCase()],
-            ["Tipo", typeName(resource.resource_type)],
-            ["Cuenta / proyecto", resource.scope_id],
-            ["Región", resource.region],
-            ["Zona", resource.zone],
-            ["Estado", resource.status],
-            ["Primera detección", date(resource.first_seen_at)],
-            ["Última detección", date(resource.last_seen_at)],
+            ["Cloud", resource.provider.toUpperCase()],
+            ["Type", typeName(resource.resource_type)],
+            ["Account / project", resource.scope_id],
+            ["Region", resource.region],
+            ["Zone", resource.zone],
+            ["Status", resource.status],
+            ["First detected", date(resource.first_seen_at)],
+            ["Last detected", date(resource.last_seen_at)],
           ].map(([label, value]) => (
             <div key={label}>
               <dt>{label}</dt>
-              <dd>{value || "Sin información"}</dd>
+              <dd>{value || "No information"}</dd>
             </div>
           ))}
         </dl>
-        <h3>Atributos</h3>
+        <h3>Attributes</h3>
         {Object.keys(resource.attributes).length ? (
           <pre>{JSON.stringify(resource.attributes, null, 2)}</pre>
         ) : (
-          <p className="muted">Este recurso no tiene atributos registrados.</p>
+          <p className="muted">This resource has no registered attributes.</p>
         )}
       </section>
     </dialog>

@@ -9,11 +9,11 @@ export async function getInventory(path, filters, signal) {
     response = await fetch(`/api/${path}?${params}`, { signal });
   } catch (error) {
     if (error.name === "AbortError") throw error;
-    throw new Error("Sin conexión con la API. Verifica que esté en ejecución.");
+    throw new Error("Unable to connect to the API. Make sure it is running.");
   }
   if (!response.ok)
     throw new Error(
-      "El inventario no está disponible. Revisa la API y la conexión a PostgreSQL.",
+      "The inventory is unavailable. Check the API and PostgreSQL connection.",
     );
   return response.json();
 }

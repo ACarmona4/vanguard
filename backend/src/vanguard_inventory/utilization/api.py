@@ -39,9 +39,9 @@ def create_router(database_dependency):
     def history(resource_id: int, connection: database_dependency, hours: HistoryHours = HistoryHours.hour):
         resource = connection.execute("SELECT * FROM inventory_resources WHERE id = %s", (resource_id,)).fetchone()
         if not resource:
-            raise HTTPException(status_code=404, detail="Recurso no encontrado")
+            raise HTTPException(status_code=404, detail="Resource not found")
         if not metrics_for(resource):
-            raise HTTPException(status_code=422, detail="Las métricas de utilización no aplican a este recurso")
+            raise HTTPException(status_code=422, detail="Utilization metrics do not apply to this resource")
         try:
             return describe([resource], query_series([resource], minutes=hours * 60), history=True)[0]
         except MetricsUnavailable as exc:

@@ -36,79 +36,79 @@ export default function DashboardPage() {
   const summary = data?.summary;
   const collection = data?.collection;
   const status = !collection
-    ? "Consultando sincronización…"
+    ? "Checking sync status…"
     : !collection.enabled
-      ? "Sincronización pausada"
+      ? "Sync paused"
       : collection.status === "error"
-        ? "No se pudieron sincronizar las nubes. Se reintentará automáticamente."
+        ? "Cloud sync failed. It will retry automatically."
         : collection.status === "partial"
-          ? "Sincronización parcial. Algunos recursos no pudieron consultarse."
+          ? "Partial sync. Some resources could not be retrieved."
           : collection.running
-            ? "Sincronizando nubes…"
-            : "Sincronización automática activa";
+            ? "Syncing clouds…"
+            : "Automatic sync active";
   return (
     <main id="dashboard">
       <section className="page-heading">
         <div>
           <h1>Dashboard</h1>
-          <p>Una mirada general a tus recursos en la nube.</p>
+          <p>An overview of your cloud resources.</p>
         </div>
       </section>
       {error && (
         <div className="error" role="alert">
-          {error} Volveremos a consultar automáticamente.
+          {error} We will retry automatically.
         </div>
       )}
       <section
         className="metrics dashboard-metrics"
-        aria-label="Resumen general del inventario"
+        aria-label="General inventory summary"
       >
         <Metric
-          label="Recursos inventariados"
+          label="Inventoried resources"
           value={summary?.total ?? 0}
           icon={Box}
-          caption="En todas tus nubes"
+          caption="Across all your clouds"
           loading={!data}
         />
         <Metric
-          label="Tipos de recurso"
+          label="Resource types"
           value={summary?.by_type.length ?? 0}
           icon={Layers3}
-          caption="Registrados en el inventario"
+          caption="Registered in the inventory"
           loading={!data}
         />
         <Metric
-          label="Regiones"
+          label="Regions"
           value={summary?.by_region.filter((row) => row.value).length ?? 0}
           icon={Globe2}
-          caption="Con recursos registrados"
+          caption="With registered resources"
           loading={!data}
         />
       </section>
       <section
         className="dashboard-overview"
-        aria-label="Inventario y sincronización"
+        aria-label="Inventory and synchronization"
       >
         <div>
-          <h2>Tu inventario, al día</h2>
-          <p>Explora los recursos por nube, cuenta y región.</p>
+          <h2>Your inventory, up to date</h2>
+          <p>Explore resources by cloud, account, and region.</p>
           <a className="button" href="#inventory">
-            Ver inventario <ArrowUpRight size={15} />
+            View inventory <ArrowUpRight size={15} />
           </a>
         </div>
         <div className="dashboard-sync" role="status">
           <span>{status}</span>
           <small>
-            Última sincronización cloud:{" "}
+            Last cloud sync:{" "}
             {collection?.last_success_at
               ? date(collection.last_success_at)
-              : "Pendiente"}
+              : "Pending"}
           </small>
         </div>
       </section>
       <UtilizationWidgets />
       <p className="dashboard-future">
-        Próximamente: costos, recomendaciones y automatizaciones.
+        Coming soon: costs, recommendations, and automations.
       </p>
     </main>
   );

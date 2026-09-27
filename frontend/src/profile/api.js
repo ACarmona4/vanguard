@@ -8,10 +8,10 @@ async function request(path, options = {}) {
         : options.headers,
     });
   } catch {
-    throw new Error("Sin conexión con la API. Verifica que esté en ejecución.");
+    throw new Error("Unable to connect to the API. Make sure it is running.");
   }
   if (!response.ok) {
-    let detail = "No fue posible completar la operación.";
+    let detail = "The operation could not be completed.";
     try {
       const payload = await response.json();
       detail = payload.detail || detail;

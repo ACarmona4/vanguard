@@ -8,7 +8,9 @@ import {
 } from "lucide-react";
 
 export default function CloudAccessRequired({ reason, connections, onRetry }) {
-  const unavailable = connections.filter((connection) => connection.status === "error");
+  const unavailable = connections.filter(
+    (connection) => connection.status === "error",
+  );
   const verificationFailed = reason === "verification-error";
   const credentialsFailed = reason === "credentials-error";
 
@@ -16,22 +18,28 @@ export default function CloudAccessRequired({ reason, connections, onRetry }) {
     <main className="cloud-access-page">
       <section className="cloud-access-card" role="status">
         <div className="cloud-access-icon">
-          {verificationFailed ? <AlertTriangle size={28} /> : credentialsFailed ? <ShieldAlert size={28} /> : <CloudCog size={28} />}
+          {verificationFailed ? (
+            <AlertTriangle size={28} />
+          ) : credentialsFailed ? (
+            <ShieldAlert size={28} />
+          ) : (
+            <CloudCog size={28} />
+          )}
         </div>
-        <span className="eyebrow">CONFIGURACIÓN REQUERIDA</span>
+        <span className="eyebrow">SETUP REQUIRED</span>
         <h1>
           {verificationFailed
-            ? "No pudimos verificar tus conexiones"
+            ? "We could not verify your connections"
             : credentialsFailed
-              ? "Las credenciales cloud no están disponibles"
-              : "Conecta una cuenta cloud para comenzar"}
+              ? "Cloud credentials are unavailable"
+              : "Connect a cloud account to get started"}
         </h1>
         <p>
           {verificationFailed
-            ? "La aplicación no pudo consultar el estado de las conexiones. Verifica que la API y PostgreSQL estén disponibles."
+            ? "The application could not retrieve the connection status. Make sure the API and PostgreSQL are available."
             : credentialsFailed
-              ? "Todas las conexiones configuradas presentan errores. Actualiza las credenciales para volver a acceder al dashboard y al inventario."
-              : "Antes de usar el dashboard, el inventario y las futuras funciones, configura al menos una cuenta de AWS o un proyecto de Google Cloud."}
+              ? "All configured connections have errors. Update the credentials to regain access to the dashboard and inventory."
+              : "Before using the dashboard, inventory, and upcoming features, configure at least one AWS account or Google Cloud project."}
         </p>
 
         {credentialsFailed && unavailable.length > 0 && (
@@ -40,7 +48,10 @@ export default function CloudAccessRequired({ reason, connections, onRetry }) {
               <div key={connection.id}>
                 <span>{connection.provider.toUpperCase()}</span>
                 <strong>{connection.name}</strong>
-                <small>{connection.last_error || "No fue posible autenticar la conexión."}</small>
+                <small>
+                  {connection.last_error ||
+                    "The connection could not be authenticated."}
+                </small>
               </div>
             ))}
           </div>
@@ -49,17 +60,18 @@ export default function CloudAccessRequired({ reason, connections, onRetry }) {
         <div className="cloud-access-actions">
           <a className="button primary" href="#profile">
             <KeyRound size={15} />
-            {credentialsFailed ? "Actualizar credenciales" : "Configurar conexiones"}
+            {credentialsFailed ? "Update credentials" : "Configure connections"}
             <ArrowRight size={14} />
           </a>
           {verificationFailed && (
             <button className="button" type="button" onClick={onRetry}>
-              <RefreshCw size={14} /> Reintentar
+              <RefreshCw size={14} /> Retry
             </button>
           )}
         </div>
         <small className="cloud-access-help">
-          Las credenciales se validan antes de guardarse y nunca se muestran nuevamente.
+          Credentials are validated before they are saved and are never
+          displayed again.
         </small>
       </section>
     </main>

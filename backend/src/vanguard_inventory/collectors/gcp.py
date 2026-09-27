@@ -201,6 +201,6 @@ def check_gcp(project_id: str) -> str:
     credentials.refresh(Request())
     project = resourcemanager_v3.ProjectsClient().get_project(name=f"projects/{project_id}")
     return (
-        f"GCP disponible: project={project.project_id}, state={project.state.name}, "
+        f"GCP available: project={project.project_id}, state={project.state.name}, "
         f"credential_project={detected_project or 'not-set'}"
     )

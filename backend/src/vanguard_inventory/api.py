@@ -68,7 +68,7 @@ app.add_middleware(
 def get_connection() -> Iterator[psycopg.Connection]:
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
-        raise HTTPException(status_code=503, detail="DATABASE_URL no está configurada")
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     with psycopg.connect(database_url, connect_timeout=5, row_factory=dict_row) as connection:
         connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         connection.execute("SET LOCAL statement_timeout = '5s'")
@@ -82,7 +82,7 @@ app.include_router(utilization_router(Database))
 def get_write_connection() -> Iterator[psycopg.Connection]:
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
-        raise HTTPException(status_code=503, detail="DATABASE_URL no está configurada")
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
     with psycopg.connect(database_url, connect_timeout=5, row_factory=dict_row) as connection:
         yield connection
 
@@ -93,7 +93,7 @@ WriteDatabase = Annotated[psycopg.Connection, Depends(get_write_connection)]
 @app.exception_handler(psycopg.Error)
 def database_error(_request: Request, _error: psycopg.Error) -> JSONResponse:
     # Connection errors may contain credentials or internal connection details.
-    return JSONResponse(status_code=503, content={"detail": "Inventario no disponible"})
+    return JSONResponse(status_code=503, content={"detail": "Inventory unavailable"})
 
 
 @app.get("/api/health")
@@ -146,11 +146,11 @@ def cloud_connection_create(
             verified = validate_gcp(credentials, payload.project_id)
             regions = []
         else:  # pragma: no cover - guarded by Pydantic
-            raise ValueError("Proveedor no soportado")
+            raise ValueError("Unsupported provider")
     except Exception as exc:
         raise HTTPException(
             status_code=400,
-            detail=f"No fue posible validar las credenciales: {type(exc).__name__}: {exc}",
+            detail=f"Credentials could not be validated: {type(exc).__name__}: {exc}",
         ) from exc
     try:
         created = cloud_connections.create_connection(
@@ -169,7 +169,7 @@ def cloud_connection_create(
         connection.rollback()
         raise HTTPException(
             status_code=409,
-            detail="Esta cuenta o proyecto ya está configurado",
+            detail="This account or project is already configured",
         ) from exc
 
 
@@ -206,9 +206,9 @@ def cloud_connection_update(
 ) -> dict:
     existing = cloud_connections.get_connection(connection, connection_id)
     if not existing:
-        raise HTTPException(status_code=404, detail="Conexión cloud no encontrada")
+        raise HTTPException(status_code=404, detail="Cloud connection not found")
     if payload.provider != existing["provider"]:
-        raise HTTPException(status_code=400, detail="No se puede cambiar el proveedor")
+        raise HTTPException(status_code=400, detail="The provider cannot be changed")
     try:
         if isinstance(payload, AWSConnectionCreate):
             credentials = {
@@ -223,11 +223,11 @@ def cloud_connection_update(
             verified = validate_gcp(credentials, payload.project_id)
             regions = []
         if verified["scope_id"] != existing["scope_id"]:
-            raise ValueError("Las credenciales pertenecen a otra cuenta o proyecto")
+            raise ValueError("The credentials belong to a different account or project")
     except Exception as exc:
         raise HTTPException(
             status_code=400,
-            detail=f"No fue posible validar las credenciales: {type(exc).__name__}: {exc}",
+            detail=f"Credentials could not be validated: {type(exc).__name__}: {exc}",
         ) from exc
     updated = cloud_connections.update_connection(
         connection,
@@ -245,5 +245,5 @@ def cloud_connection_update(
 @app.delete("/api/cloud-connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
 def cloud_connection_delete(connection_id: str, connection: WriteDatabase) -> Response:
     if not cloud_connections.delete_connection(connection, connection_id):
-        raise HTTPException(status_code=404, detail="Conexión cloud no encontrada")
+        raise HTTPException(status_code=404, detail="Cloud connection not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)

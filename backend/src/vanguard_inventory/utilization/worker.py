@@ -34,7 +34,7 @@ class MetricsWorker:
     def collect(self):
         database_url = os.getenv("DATABASE_URL")
         if not database_url:
-            raise RuntimeError("DATABASE_URL no configurada")
+            raise RuntimeError("DATABASE_URL is not configured")
         with psycopg.connect(database_url, row_factory=dict_row, connect_timeout=5) as connection:
             configured = [cloud_connections.get_connection(connection, str(item["id"]), include_credentials=True)
                           for item in cloud_connections.list_connections(connection, enabled_only=True)]
@@ -53,7 +53,7 @@ class MetricsWorker:
                 errors.extend(failures)
                 export(samples, os.getenv("VANGUARD_OTLP_METRICS_ENDPOINT", "http://127.0.0.1:4318/v1/metrics"))
             except Exception as exc:
-                errors.append(f"{item['name']}: {type(exc).__name__}; verifica permisos, conexión y Collector")
+                errors.append(f"{item['name']}: {type(exc).__name__}; check permissions, connection, and Collector")
         self._set(status="partial" if errors else "success", errors=errors[:30], last_finished_at=datetime.now(timezone.utc).isoformat())
 
     async def run(self):
@@ -70,7 +70,7 @@ class MetricsWorker:
                 await asyncio.to_thread(self.collect)
             except Exception as exc:
                 logger.warning("Metrics collection failed: %s", type(exc).__name__)
-                self._set(status="error", errors=["No fue posible recolectar métricas; revisa la base de datos y la configuración."])
+                self._set(status="error", errors=["Metrics could not be collected; check the database and configuration."])
             await asyncio.sleep(interval)
 
 

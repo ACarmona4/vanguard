@@ -58,7 +58,7 @@ class AWSCollectionScheduler:
             return max(10, int(raw_value))
         except ValueError:
             logger.warning(
-                "AWS_COLLECTION_INTERVAL_SECONDS=%r no es válido; se usarán 60 segundos",
+                "AWS_COLLECTION_INTERVAL_SECONDS=%r is invalid; using 60 seconds",
                 raw_value,
             )
             return 60
@@ -166,7 +166,7 @@ class AWSCollectionScheduler:
     def _collect_and_save(cls) -> tuple[int, int, list[str]]:
         database_url = os.getenv("DATABASE_URL")
         if not database_url:
-            raise RuntimeError("DATABASE_URL no está configurada")
+            raise RuntimeError("DATABASE_URL is not configured")
 
         configured_result = cls._collect_configured(database_url)
         if configured_result is not None:
@@ -218,13 +218,13 @@ class AWSCollectionScheduler:
             self._set_state(**values)
             if errors:
                 logger.warning(
-                    "Recolección cloud parcial: %s recursos procesados, %s errores",
+                    "Partial cloud collection: %s resources processed, %s errors",
                     saved,
                     len(errors),
                 )
             else:
                 logger.info(
-                    "Recolección cloud completa: %s recursos procesados, %s eliminados",
+                    "Cloud collection complete: %s resources processed, %s deleted",
                     saved,
                     deleted,
                 )
@@ -232,7 +232,7 @@ class AWSCollectionScheduler:
             self._set_state(running=False)
             raise
         except Exception:
-            logger.exception("Falló la recolección automática cloud")
+            logger.exception("Automatic cloud collection failed")
             self._set_state(
                 running=False,
                 status="error",

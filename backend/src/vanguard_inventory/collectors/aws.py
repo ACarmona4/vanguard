@@ -161,4 +161,4 @@ def check_aws(profile: str | None = None) -> str:
 
     session = boto3.Session(profile_name=profile) if profile else boto3.Session()
     identity = session.client("sts").get_caller_identity()
-    return f"AWS disponible: account={identity['Account']}, arn={identity['Arn']}"
+    return f"AWS available: account={identity['Account']}, arn={identity['Arn']}"

@@ -37,4 +37,4 @@ def export(samples, endpoint):
     with urlopen(request, timeout=15) as response:
         body = json.loads(response.read() or b"{}")
         if body.get("partialSuccess", {}).get("rejectedDataPoints", 0) not in (0, "0"):
-            raise RuntimeError("El Collector rechazó muestras OTLP")
+            raise RuntimeError("The Collector rejected OTLP samples")

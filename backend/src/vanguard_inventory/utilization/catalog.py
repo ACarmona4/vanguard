@@ -16,35 +16,35 @@ class Metric:
 
 
 CPU = Metric("cpu_percent", "CPU", "%", "CPUUtilization")
-MEMORY = Metric("memory_percent", "Memoria", "%", agent=True)
-FILESYSTEM = Metric("filesystem_percent", "Sistema de archivos (máximo)", "%", agent=True)
+MEMORY = Metric("memory_percent", "Memory", "%", agent=True)
+FILESYSTEM = Metric("filesystem_percent", "File system (maximum)", "%", agent=True)
 
 AWS = {
     "ec2_instance": ("AWS/EC2", "InstanceId", (
         CPU,
-        Metric("memory_percent", "Memoria", "%", "MemoryUsedPercent", agent=True, namespace="Vanguard/HostMetrics"),
-        Metric("filesystem_percent", "Sistema de archivos (máximo)", "%", "FilesystemUsedPercent", "Maximum", agent=True, namespace="Vanguard/HostMetrics"),
-        Metric("network_in_bytes_per_second", "Red entrante", "B/s", "NetworkIn", "Sum", 1 / 300),
-        Metric("network_out_bytes_per_second", "Red saliente", "B/s", "NetworkOut", "Sum", 1 / 300),
-        Metric("disk_read_bytes_per_second", "Lectura de disco local", "B/s", "DiskReadBytes", "Sum", 1 / 300),
-        Metric("disk_write_bytes_per_second", "Escritura de disco local", "B/s", "DiskWriteBytes", "Sum", 1 / 300),
+        Metric("memory_percent", "Memory", "%", "MemoryUsedPercent", agent=True, namespace="Vanguard/HostMetrics"),
+        Metric("filesystem_percent", "File system (maximum)", "%", "FilesystemUsedPercent", "Maximum", agent=True, namespace="Vanguard/HostMetrics"),
+        Metric("network_in_bytes_per_second", "Network in", "B/s", "NetworkIn", "Sum", 1 / 300),
+        Metric("network_out_bytes_per_second", "Network out", "B/s", "NetworkOut", "Sum", 1 / 300),
+        Metric("disk_read_bytes_per_second", "Local disk read", "B/s", "DiskReadBytes", "Sum", 1 / 300),
+        Metric("disk_write_bytes_per_second", "Local disk write", "B/s", "DiskWriteBytes", "Sum", 1 / 300),
     )),
     "ebs_volume": ("AWS/EBS", "VolumeId", (
-        Metric("disk_read_bytes_per_second", "Lectura de disco", "B/s", "VolumeReadBytes", "Sum", 1 / 300),
-        Metric("disk_write_bytes_per_second", "Escritura de disco", "B/s", "VolumeWriteBytes", "Sum", 1 / 300),
-        Metric("disk_queue", "Operaciones pendientes", "operaciones", "VolumeQueueLength"),
+        Metric("disk_read_bytes_per_second", "Disk read", "B/s", "VolumeReadBytes", "Sum", 1 / 300),
+        Metric("disk_write_bytes_per_second", "Disk write", "B/s", "VolumeWriteBytes", "Sum", 1 / 300),
+        Metric("disk_queue", "Pending operations", "operations", "VolumeQueueLength"),
     )),
     "dynamodb_table": ("AWS/DynamoDB", "TableName", (
-        Metric("read_units_per_second", "Lecturas consumidas", "unidades/s", "ConsumedReadCapacityUnits", "Sum", 1 / 300),
-        Metric("write_units_per_second", "Escrituras consumidas", "unidades/s", "ConsumedWriteCapacityUnits", "Sum", 1 / 300),
+        Metric("read_units_per_second", "Consumed reads", "units/s", "ConsumedReadCapacityUnits", "Sum", 1 / 300),
+        Metric("write_units_per_second", "Consumed writes", "units/s", "ConsumedWriteCapacityUnits", "Sum", 1 / 300),
     )),
     "sqs_queue": ("AWS/SQS", "QueueName", (
-        Metric("queued_messages", "Mensajes pendientes", "mensajes", "ApproximateNumberOfMessagesVisible"),
-        Metric("oldest_message_seconds", "Antigüedad del mensaje más antiguo", "s", "ApproximateAgeOfOldestMessage", "Maximum"),
+        Metric("queued_messages", "Pending messages", "messages", "ApproximateNumberOfMessagesVisible"),
+        Metric("oldest_message_seconds", "Oldest message age", "s", "ApproximateAgeOfOldestMessage", "Maximum"),
     )),
     "sns_topic": ("AWS/SNS", "TopicName", (
-        Metric("published_per_second", "Publicaciones", "mensajes/s", "NumberOfMessagesPublished", "Sum", 1 / 300),
-        Metric("failed_per_second", "Entregas fallidas", "mensajes/s", "NumberOfNotificationsFailed", "Sum", 1 / 300),
+        Metric("published_per_second", "Published messages", "messages/s", "NumberOfMessagesPublished", "Sum", 1 / 300),
+        Metric("failed_per_second", "Failed deliveries", "messages/s", "NumberOfNotificationsFailed", "Sum", 1 / 300),
     )),
 }
 
@@ -53,23 +53,23 @@ GCP = {
     "compute_instance": ("gce_instance", "instance_id", (
         Metric("cpu_percent", "CPU", "%", "compute.googleapis.com/instance/cpu/utilization", scale=100),
         MEMORY, FILESYSTEM,
-        Metric("network_in_bytes_per_second", "Red entrante", "B/s", "compute.googleapis.com/instance/network/received_bytes_count", "rate"),
-        Metric("network_out_bytes_per_second", "Red saliente", "B/s", "compute.googleapis.com/instance/network/sent_bytes_count", "rate"),
-        Metric("disk_read_bytes_per_second", "Lectura de disco", "B/s", "compute.googleapis.com/instance/disk/read_bytes_count", "rate"),
-        Metric("disk_write_bytes_per_second", "Escritura de disco", "B/s", "compute.googleapis.com/instance/disk/write_bytes_count", "rate"),
+        Metric("network_in_bytes_per_second", "Network in", "B/s", "compute.googleapis.com/instance/network/received_bytes_count", "rate"),
+        Metric("network_out_bytes_per_second", "Network out", "B/s", "compute.googleapis.com/instance/network/sent_bytes_count", "rate"),
+        Metric("disk_read_bytes_per_second", "Disk read", "B/s", "compute.googleapis.com/instance/disk/read_bytes_count", "rate"),
+        Metric("disk_write_bytes_per_second", "Disk write", "B/s", "compute.googleapis.com/instance/disk/write_bytes_count", "rate"),
     )),
     "cloudsql_instance": ("cloudsql_database", "database_id", (
         Metric("cpu_percent", "CPU", "%", "cloudsql.googleapis.com/database/cpu/utilization", scale=100),
-        Metric("memory_percent", "Memoria", "%", "cloudsql.googleapis.com/database/memory/utilization", scale=100),
-        Metric("filesystem_percent", "Disco utilizado", "%", "cloudsql.googleapis.com/database/disk/utilization", scale=100),
-        Metric("connections", "Conexiones PostgreSQL", "conexiones", "cloudsql.googleapis.com/database/postgresql/num_backends"),
+        Metric("memory_percent", "Memory", "%", "cloudsql.googleapis.com/database/memory/utilization", scale=100),
+        Metric("filesystem_percent", "Disk used", "%", "cloudsql.googleapis.com/database/disk/utilization", scale=100),
+        Metric("connections", "PostgreSQL connections", "connections", "cloudsql.googleapis.com/database/postgresql/num_backends"),
     )),
     "pubsub_topic": ("pubsub_topic", "topic_id", (
-        Metric("retained_bytes", "Mensajes retenidos", "B", "pubsub.googleapis.com/topic/retained_bytes"),
+        Metric("retained_bytes", "Retained messages", "B", "pubsub.googleapis.com/topic/retained_bytes"),
     )),
     "pubsub_subscription": ("pubsub_subscription", "subscription_id", (
-        Metric("queued_messages", "Mensajes sin confirmar", "mensajes", "pubsub.googleapis.com/subscription/num_undelivered_messages"),
-        Metric("oldest_message_seconds", "Antigüedad del mensaje sin confirmar", "s", "pubsub.googleapis.com/subscription/oldest_unacked_message_age", "max"),
+        Metric("queued_messages", "Unacknowledged messages", "messages", "pubsub.googleapis.com/subscription/num_undelivered_messages"),
+        Metric("oldest_message_seconds", "Oldest unacknowledged message age", "s", "pubsub.googleapis.com/subscription/oldest_unacked_message_age", "max"),
     )),
 }
 

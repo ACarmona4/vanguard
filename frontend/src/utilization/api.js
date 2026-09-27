@@ -21,7 +21,7 @@ export function useUtilization(path, filters = {}) {
           throw new Error(
             typeof body.detail === "string"
               ? body.detail
-              : "No fue posible consultar las métricas.",
+              : "Metrics could not be retrieved.",
           );
         if (!controller.signal.aborted)
           setState({ data: body, error: "", loading: false });
@@ -29,7 +29,7 @@ export function useUtilization(path, filters = {}) {
         if (!controller.signal.aborted)
           setState({
             data: null,
-            error: error.message || "Sin conexión con la API.",
+            error: error.message || "Unable to connect to the API.",
             loading: false,
           });
       } finally {
@@ -47,7 +47,7 @@ export function useUtilization(path, filters = {}) {
 
 export function metricValue(value, unit = "") {
   if (value == null) return "—";
-  const formatted = new Intl.NumberFormat("es-CO", {
+  const formatted = new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 2,
   }).format(value);
   return `${formatted} ${unit}`.trim();

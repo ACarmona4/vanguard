@@ -3,7 +3,6 @@ node_modules/
 .env
 .venv/
 .run/
-.vanguard/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -20,3 +19,6 @@ snapshots/*.json
 *.tfplan
 crash.log
 crash.*.log
+
+dev.sh 
+Makefile

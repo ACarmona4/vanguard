@@ -137,11 +137,11 @@ def sync_resources(
     rows = list(resources)
     region_list = list(dict.fromkeys(regions)) if regions is not None else None
     if any(resource.provider != provider or resource.scope_id != scope_id for resource in rows):
-        raise ValueError("Todos los recursos deben pertenecer al proveedor y alcance reconciliados")
+        raise ValueError("All resources must belong to the reconciled provider and scope")
     if region_list is not None:
         allowed_regions = set(region_list)
         if any(resource.region not in allowed_regions for resource in rows):
-            raise ValueError("Todos los recursos deben pertenecer a las regiones reconciliadas")
+            raise ValueError("All resources must belong to the reconciled regions")
     with psycopg.connect(database_url) as connection:
         with connection.cursor() as cursor:
             ensure_schema(cursor)
@@ -175,4 +175,4 @@ def check_database(database_url: str) -> str:
         with connection.cursor() as cursor:
             cursor.execute("SELECT current_database(), current_user")
             database, user = cursor.fetchone()
-    return f"PostgreSQL disponible: database={database}, user={user}"
+    return f"PostgreSQL available: database={database}, user={user}"
