@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Cloud,
   CircleCheck,
@@ -11,6 +11,7 @@ import {
   Trash2,
   Upload,
   UserRound,
+  X,
 } from "lucide-react";
 import {
   createConnection,
@@ -70,6 +71,7 @@ export default function AccountSettingsPage() {
   const [passwords, setPasswords] = useState({ current_password: "", new_password: "" });
   const [labConnection, setLabConnection] = useState("");
   const [labBusy, setLabBusy] = useState(false);
+  const gcpFileInput = useRef(null);
 
   async function load(signal) {
     try {
@@ -199,6 +201,7 @@ export default function AccountSettingsPage() {
       );
       setAWS(initialAWS);
       setGCP(initialGCP);
+      if (gcpFileInput.current) gcpFileInput.current.value = "";
       setEditingId(null);
       setNotice(`${saved.name} was connected and validated.`);
       window.dispatchEvent(new Event("cloud-connections-changed"));
@@ -242,6 +245,17 @@ export default function AccountSettingsPage() {
     reader.readAsText(file);
   }
 
+  function clearServiceAccount(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    setGCP((current) => ({
+      ...current,
+      service_account_json: "",
+      credential_filename: "",
+    }));
+    if (gcpFileInput.current) gcpFileInput.current.value = "";
+  }
+
   function edit(connection) {
     setEditingId(connection.id);
     setProvider(connection.provider);
@@ -269,6 +283,7 @@ export default function AccountSettingsPage() {
     setEditingId(null);
     setAWS(initialAWS);
     setGCP(initialGCP);
+    if (gcpFileInput.current) gcpFileInput.current.value = "";
     setError("");
   }
 
@@ -491,11 +506,25 @@ export default function AccountSettingsPage() {
               </label>
               <label className={`file-field ${gcp.credential_filename ? "loaded" : ""}`}>
                 GCP credential JSON file
-                <span className={gcp.credential_filename ? "file-loaded" : "file-button"}>
-                  {gcp.credential_filename ? <CircleCheck size={16} /> : <Upload size={15} />}
-                  {gcp.credential_filename || "Select JSON"}
-                </span>
+                {gcp.credential_filename ? (
+                  <span className="file-loaded">
+                    <CircleCheck size={16} />
+                    <span className="file-loaded-name">{gcp.credential_filename}</span>
+                    <button
+                      type="button"
+                      className="file-remove"
+                      aria-label={`Remove ${gcp.credential_filename}`}
+                      title="Remove file"
+                      onClick={clearServiceAccount}
+                    >
+                      <X size={15} />
+                    </button>
+                  </span>
+                ) : (
+                  <span className="file-button"><Upload size={15} />Select JSON</span>
+                )}
                 <input
+                  ref={gcpFileInput}
                   required={!gcp.service_account_json}
                   type="file"
                   accept="application/json,.json"

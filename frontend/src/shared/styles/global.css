@@ -1181,12 +1181,35 @@ pre {
   padding: 15px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 8px;
   overflow-wrap: anywhere;
   background: #f0fdf4;
   color: #166534 !important;
 }
+.file-loaded-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit !important;
+  text-align: left;
+}
+.file-remove {
+  display: grid;
+  flex: 0 0 28px;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: -7px -7px -7px auto;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+}
+.file-remove:hover { background: #16653412; }
 .security-note {
   display: flex;
   gap: 10px;
