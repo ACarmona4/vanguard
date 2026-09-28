@@ -19,7 +19,12 @@ from .accounts import auth
 from .accounts import connections as cloud_connections
 from .accounts import deployments as lab_deployments
 from .accounts.mailer import send_password_reset
-from .accounts.credentials import encrypt_credentials, validate_aws, validate_gcp
+from .accounts.credentials import (
+    CredentialValidationError,
+    encrypt_credentials,
+    validate_aws,
+    validate_gcp,
+)
 from .costs import repository as cost_repository
 from .costs.api import create_router as costs_router
 from .costs.worker import cost_worker
@@ -27,9 +32,9 @@ from .utilization.api import create_router as utilization_router
 from .utilization.worker import metrics_worker
 from .config import load_environment
 from .database import ensure_schema as ensure_inventory_schema
-from .scheduler import aws_collection_scheduler, stop_scheduler
+from .scheduler import cloud_collection_scheduler, stop_scheduler
 from .schemas import (
-    AWSCollectionStatus,
+    CloudCollectionStatus,
     AWSConnectionCreate,
     AuthResponse,
     CloudConnectionCreate,
@@ -66,11 +71,11 @@ async def lifespan(_app: FastAPI):
             lab_deployments.ensure_table(connection)
             cost_repository.ensure_schema(connection)
             connection.commit()
-    aws_collection_scheduler.configure()
+    cloud_collection_scheduler.configure()
     task = None
-    if aws_collection_scheduler.snapshot()["enabled"]:
+    if cloud_collection_scheduler.snapshot()["enabled"]:
         task = asyncio.create_task(
-            aws_collection_scheduler.run(), name="aws-inventory-collector"
+            cloud_collection_scheduler.run(), name="cloud-inventory-collector"
         )
     metrics_task = asyncio.create_task(metrics_worker.run(), name="utilization-collector")
     costs_task = asyncio.create_task(cost_worker.run(), name="cost-collector")
@@ -279,8 +284,8 @@ def summary(
     return repository.summarize_resources(connection, filters, str(user["id"]))
 
 
-@app.get("/api/collection-status", response_model=AWSCollectionStatus)
-def collection_status(connection: Database, user: CurrentUser) -> AWSCollectionStatus:
+@app.get("/api/collection-status", response_model=CloudCollectionStatus)
+def collection_status(connection: Database, user: CurrentUser) -> CloudCollectionStatus:
     rows = cloud_connections.list_connections(connection, owner_id=str(user["id"]))
     states = [row["status"] for row in rows]
     last_success = max((row["last_synced_at"] for row in rows if row["last_synced_at"]), default=None)
@@ -293,11 +298,11 @@ def collection_status(connection: Database, user: CurrentUser) -> AWSCollectionS
     total = connection.execute(
         "SELECT count(*) AS total FROM inventory_resources WHERE owner_id = %s", (user["id"],)
     ).fetchone()["total"]
-    return AWSCollectionStatus(
-        enabled=aws_collection_scheduler.snapshot()["enabled"],
+    return CloudCollectionStatus(
+        enabled=cloud_collection_scheduler.snapshot()["enabled"],
         running="syncing" in states,
         status=status_value,
-        interval_seconds=aws_collection_scheduler.snapshot()["interval_seconds"],
+        interval_seconds=cloud_collection_scheduler.snapshot()["interval_seconds"],
         last_started_at=None,
         last_finished_at=last_success,
         last_success_at=last_success,
@@ -338,6 +343,9 @@ def cloud_connection_create(
             regions = []
         else:  # pragma: no cover - guarded by Pydantic
             raise ValueError("Unsupported provider")
+    except CredentialValidationError as exc:
+        logger.info("Cloud credential format validation failed")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.info("Cloud credential validation failed: %s", type(exc).__name__)
         raise HTTPException(
@@ -382,7 +390,7 @@ def _sync_cloud_connection(connection_id: str, owner_id: str) -> None:
                 connection, connection_id, owner_id=owner_id, include_credentials=True
             )
         if configured:
-            aws_collection_scheduler._collect_saved_connection(database_url, configured)
+            cloud_collection_scheduler.collect_saved_connection(database_url, configured)
     except Exception as exc:
         try:
             with psycopg.connect(database_url) as connection:
@@ -424,6 +432,9 @@ def cloud_connection_update(
             regions = []
         if verified["scope_id"] != existing["scope_id"]:
             raise ValueError("The credentials belong to a different account or project")
+    except CredentialValidationError as exc:
+        logger.info("Cloud credential format validation failed")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.info("Cloud credential validation failed: %s", type(exc).__name__)
         raise HTTPException(

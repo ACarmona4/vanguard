@@ -66,7 +66,6 @@ GCP = {
     )),
 }
 
-
 def metrics_for(resource: dict) -> tuple[Metric, ...]:
     catalog = {"aws": AWS, "gcp": GCP}.get(resource["provider"], {})
     entry = catalog.get(resource["resource_type"])

@@ -100,7 +100,7 @@ class InventorySummary(BaseModel):
     by_account: list[ResourceCount]
 
 
-class AWSCollectionStatus(BaseModel):
+class CloudCollectionStatus(BaseModel):
     enabled: bool
     running: bool
     status: Literal["idle", "running", "success", "partial", "error", "disabled"]

@@ -114,7 +114,7 @@ function GcpSourceForm({ source, onSaved }) {
 }
 
 export default function CostsPage() {
-  const [filters, setFilters] = useState({ days: "30", provider: "all" });
+  const [filters, setFilters] = useState({ days: "30", provider: "all", infrastructure: "" });
   const [category, setCategory] = useState("");
   const [selectedCurrency, setSelectedCurrency] = useState("");
   const [syncing, setSyncing] = useState(false);
@@ -156,7 +156,8 @@ export default function CostsPage() {
       <Notification message={notice.message} type={notice.type} onDismiss={dismissNotice} />
       <div className="cost-filters">
         <label><CalendarDays size={15} /><select value={filters.days} onChange={(event) => setFilters({ ...filters, days: event.target.value })}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label>
-        <label><Cloud size={15} /><select value={filters.provider} onChange={(event) => setFilters({ ...filters, provider: event.target.value })}><option value="all">All clouds</option><option value="aws">AWS</option><option value="gcp">Google Cloud</option></select></label>
+        <label><Cloud size={15} /><select value={filters.provider} onChange={(event) => { setFilters({ ...filters, provider: event.target.value, infrastructure: "" }); setCategory(""); }}><option value="all">All clouds</option><option value="aws">AWS</option><option value="gcp">Google Cloud</option></select></label>
+        <label><Server size={15} /><select value={filters.infrastructure} onChange={(event) => { setFilters({ ...filters, infrastructure: event.target.value }); setCategory(""); }}><option value="">All {filters.provider === "all" ? "infrastructure" : "services"}</option>{(data?.infrastructure_options || []).map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         {data?.totals?.length > 1 && <label><Coins size={15} /><select value={currency} onChange={(event) => setSelectedCurrency(event.target.value)}>{data.totals.map((item) => <option key={item.currency} value={item.currency}>{item.currency}</option>)}</select></label>}
       </div>
 

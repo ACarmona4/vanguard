@@ -2,6 +2,7 @@ import unittest
 
 from vanguard_inventory.costs.catalog import category_for
 from vanguard_inventory.costs.collectors import validate_gcp_table
+from vanguard_inventory.costs.schemas import CostQuery
 
 
 class CostCatalogTests(unittest.TestCase):
@@ -26,6 +27,13 @@ class CostCatalogTests(unittest.TestCase):
         self.assertEqual(validate_gcp_table(f"`{table}`"), table)
         with self.assertRaises(ValueError):
             validate_gcp_table("project.dataset.table`; DROP TABLE users; --")
+
+    def test_cost_period_accepts_url_query_strings(self):
+        query = CostQuery(days="30", provider="all", infrastructure="Compute")
+        self.assertEqual(query.days, 30)
+        self.assertEqual(query.infrastructure, "Compute")
+        with self.assertRaises(ValueError):
+            CostQuery(days="31", provider="all")
 
 
 if __name__ == "__main__":

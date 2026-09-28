@@ -69,10 +69,6 @@ export default function CloudAccessRequired({ reason, connections, onRetry }) {
             </button>
           )}
         </div>
-        <small className="cloud-access-help">
-          Credentials are validated before they are saved and are never
-          displayed again.
-        </small>
       </section>
     </main>
   );

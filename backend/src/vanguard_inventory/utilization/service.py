@@ -22,8 +22,14 @@ def query_series(resources, minutes=30):
         return []
     # Values always originate in the database and are escaped as PromQL string literals.
     selectors = ['__name__=~"vanguard_.+"']
+    owner_ids = {str(resource.get("owner_id") or "") for resource in resources}
+    if len(owner_ids) == 1:
+        selectors.append(f"owner_id={json.dumps(owner_ids.pop())}")
     if len(resources) == 1:
-        selectors.extend(f"{label}={json.dumps(value)}" for label, value in zip(IDENTITY_LABELS, identity(resources[0])))
+        selectors.extend(
+            f"{label}={json.dumps(value)}"
+            for label, value in zip(IDENTITY_LABELS[1:], identity(resources[0])[1:])
+        )
     query = "{" + ",".join(selectors) + "}[" + str(minutes) + "m]"
     base = os.getenv("VANGUARD_PROMETHEUS_URL", "http://127.0.0.1:9090").rstrip("/")
     try:
@@ -45,7 +51,7 @@ def indexed_series(series):
         points = [(float(timestamp), float(value)) for timestamp, value in item.get("values", [])
                   if math.isfinite(float(value))]
         if points:
-            # Duplicate identities (e.g. an agent restart) are merged by timestamp.
+            # Repeated samples for the same cloud resource are merged by timestamp.
             indexed.setdefault((key, metric), {}).update(points)
     return indexed
 

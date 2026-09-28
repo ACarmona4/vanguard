@@ -8,7 +8,9 @@ export function useCosts(filters) {
   useEffect(() => {
     const controller = new AbortController();
     let timer;
-    const query = new URLSearchParams(filters).toString();
+    const query = new URLSearchParams(
+      Object.entries(filters).filter(([, value]) => value !== "" && value != null),
+    ).toString();
     async function load() {
       let nextDelay = 300_000;
       try {
@@ -33,7 +35,7 @@ export function useCosts(filters) {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [filters.days, filters.provider, refresh]);
+  }, [filters.days, filters.provider, filters.infrastructure, refresh]);
   return { ...state, reload };
 }
 

@@ -1,21 +1,14 @@
 import { useState } from "react";
 import { useUtilization, metricValue } from "./api";
 import { typeName } from "../inventory/resourceNames";
+import {
+  resourceGroupName,
+  utilizationGroups,
+  utilizationTypesByProvider,
+} from "../inventory/resourceTypes";
 import { date } from "../shared/utils/format";
 import Filter from "../shared/components/Filter";
 import Notification from "../shared/components/Notification";
-
-const resourceTypes = [
-  "ec2_instance",
-  "ebs_volume",
-  "compute_instance",
-  "cloudsql_instance",
-  "dynamodb_table",
-  "sqs_queue",
-  "sns_topic",
-  "pubsub_topic",
-  "pubsub_subscription",
-];
 
 function MetricStatus({ metric }) {
   return (
@@ -161,10 +154,14 @@ export default function UtilizationPage() {
     limit: 20,
   });
   function change(key, value) {
-    setFilters((previous) => ({
-      ...previous,
-      [key]: value || (key === "provider" ? "all" : ""),
-    }));
+    setFilters((previous) => {
+      const next = {
+        ...previous,
+        [key]: value || (key === "provider" ? "all" : ""),
+      };
+      if (key === "provider") next.resource_type = "";
+      return next;
+    });
     setOffset(0);
     setSelected(null);
   }
@@ -187,8 +184,14 @@ export default function UtilizationPage() {
         <Filter
           label="Type"
           value={filters.resource_type}
-          options={resourceTypes.map((value) => ({ value }))}
-          format={typeName}
+          options={
+            filters.provider === "all"
+              ? utilizationGroups
+              : utilizationTypesByProvider[filters.provider].map((value) => ({ value }))
+          }
+          format={(value) =>
+            resourceGroupName(value) || typeName(value)
+          }
           onChange={(value) => change("resource_type", value)}
         />
         <label className="filter">

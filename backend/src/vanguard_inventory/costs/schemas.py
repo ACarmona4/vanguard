@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from enum import IntEnum
 from typing import Literal
 from uuid import UUID
 
@@ -7,9 +8,16 @@ from pydantic import BaseModel, Field, field_validator
 from .collectors import validate_gcp_table
 
 
+class CostDays(IntEnum):
+    week = 7
+    month = 30
+    quarter = 90
+
+
 class CostQuery(BaseModel):
-    days: Literal[7, 30, 90] = 30
+    days: CostDays = CostDays.month
     provider: Literal["aws", "gcp", "all"] = "all"
+    infrastructure: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class CostSourceUpdate(BaseModel):
@@ -83,4 +91,5 @@ class CostOverview(BaseModel):
     top_resources: list[CostResource]
     service_count: int
     estimated: bool
+    infrastructure_options: list[str]
     sources: list[CostSourceResponse]

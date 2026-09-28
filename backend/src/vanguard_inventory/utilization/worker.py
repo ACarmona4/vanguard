@@ -48,6 +48,7 @@ class MetricsWorker:
         errors = []
         owner_states = {}
         for item in configured:
+            owner = owner_states.setdefault(str(item["owner_id"]), [])
             matching = [r for r in resources if r["provider"] == item["provider"]
                         and r["owner_id"] == item["owner_id"]
                         and r["connection_id"] == item["id"] and metrics_for(r)]
@@ -58,7 +59,6 @@ class MetricsWorker:
                 reader = aws_samples if item["provider"] == "aws" else gcp_samples
                 samples, failures = reader(matching, credentials, now)
                 errors.extend(failures)
-                owner = owner_states.setdefault(str(item["owner_id"]), [])
                 owner.extend(failures)
                 export(samples, os.getenv("VANGUARD_OTLP_METRICS_ENDPOINT", "http://127.0.0.1:4318/v1/metrics"))
             except Exception as exc:

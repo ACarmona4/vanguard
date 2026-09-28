@@ -36,13 +36,15 @@ def _enabled(value: str | None) -> bool:
     return (value or "true").strip().lower() not in {"0", "false", "no", "off"}
 
 
-class AWSCollectionScheduler:
-    """Run one non-overlapping AWS collection at a fixed interval."""
+class CloudCollectionScheduler:
+    """Keep every enabled user-owned cloud connection synchronized."""
 
     def __init__(self) -> None:
         self._lock = Lock()
         self._state = {
-            "enabled": _enabled(os.getenv("VANGUARD_AUTO_COLLECT_AWS")),
+            "enabled": _enabled(self._environment_value(
+                "VANGUARD_AUTO_COLLECT", "VANGUARD_AUTO_COLLECT_AWS"
+            )),
             "running": False,
             "status": "idle",
             "interval_seconds": self._interval_from_environment(),
@@ -55,13 +57,19 @@ class AWSCollectionScheduler:
         }
 
     @staticmethod
-    def _interval_from_environment() -> int:
-        raw_value = os.getenv("AWS_COLLECTION_INTERVAL_SECONDS", "60")
+    def _environment_value(name: str, legacy_name: str) -> str | None:
+        return os.getenv(name, os.getenv(legacy_name))
+
+    @classmethod
+    def _interval_from_environment(cls) -> int:
+        raw_value = cls._environment_value(
+            "VANGUARD_COLLECTION_INTERVAL_SECONDS", "AWS_COLLECTION_INTERVAL_SECONDS"
+        ) or "60"
         try:
             return max(10, int(raw_value))
         except ValueError:
             logger.warning(
-                "AWS_COLLECTION_INTERVAL_SECONDS=%r is invalid; using 60 seconds",
+                "VANGUARD_COLLECTION_INTERVAL_SECONDS=%r is invalid; using 60 seconds",
                 raw_value,
             )
             return 60
@@ -73,7 +81,9 @@ class AWSCollectionScheduler:
     def configure(self) -> None:
         """Reload settings after the central .env file has been loaded."""
         with self._lock:
-            self._state["enabled"] = _enabled(os.getenv("VANGUARD_AUTO_COLLECT_AWS"))
+            self._state["enabled"] = _enabled(self._environment_value(
+                "VANGUARD_AUTO_COLLECT", "VANGUARD_AUTO_COLLECT_AWS"
+            ))
             self._state["interval_seconds"] = self._interval_from_environment()
             if not self._state["enabled"]:
                 self._state["status"] = "disabled"
@@ -85,7 +95,7 @@ class AWSCollectionScheduler:
             self._state.update(values)
 
     @staticmethod
-    def _collect_saved_connection(database_url: str, configured: dict) -> tuple[int, int, list[str]]:
+    def collect_saved_connection(database_url: str, configured: dict) -> tuple[int, int, list[str]]:
         with _connection_lock(str(configured["id"])):
             with psycopg.connect(database_url) as connection:
                 if not cloud_connections.claim_sync(connection, str(configured["id"])):
@@ -159,7 +169,7 @@ class AWSCollectionScheduler:
         workers = min(8, len(configured))
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cloud-collector") as executor:
             futures = {
-                executor.submit(cls._collect_saved_connection, database_url, item): item
+                executor.submit(cls.collect_saved_connection, database_url, item): item
                 for item in configured
             }
             for future in as_completed(futures):
@@ -250,7 +260,7 @@ class AWSCollectionScheduler:
             await asyncio.sleep(delay)
 
 
-aws_collection_scheduler = AWSCollectionScheduler()
+cloud_collection_scheduler = CloudCollectionScheduler()
 
 
 async def stop_scheduler(task: asyncio.Task | None) -> None:

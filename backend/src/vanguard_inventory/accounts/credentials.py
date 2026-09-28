@@ -11,6 +11,11 @@ from cryptography.fernet import Fernet, InvalidToken
 
 
 LOCAL_VAULT_KEY = Path(".vanguard/vault.key")
+GCP_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+
+
+class CredentialValidationError(ValueError):
+    """A safe credential-format error that can be returned to the user."""
 
 
 def _cipher() -> Fernet:
@@ -78,25 +83,43 @@ def validate_aws(credentials: dict[str, str], regions: list[str]) -> dict[str, s
 
 
 def gcp_credentials(credentials: dict[str, Any]):
-    from google.oauth2 import service_account
+    credential_type = credentials.get("type")
+    try:
+        if credential_type == "service_account":
+            from google.oauth2 import service_account
 
-    return service_account.Credentials.from_service_account_info(
-        credentials,
-        scopes=["https://www.googleapis.com/auth/cloud-platform"],
+            return service_account.Credentials.from_service_account_info(
+                credentials, scopes=[GCP_SCOPE]
+            )
+        if credential_type == "authorized_user":
+            from google.oauth2.credentials import Credentials
+
+            return Credentials.from_authorized_user_info(
+                credentials, scopes=[GCP_SCOPE]
+            )
+    except (KeyError, ValueError) as exc:
+        raise CredentialValidationError(
+            "The GCP credential JSON is incomplete or invalid."
+        ) from exc
+    raise CredentialValidationError(
+        "Use a GCP service account key or Application Default Credentials JSON."
     )
 
 
 def validate_gcp(credentials: dict[str, Any], project_id: str) -> dict[str, str]:
     from google.cloud import resourcemanager_v3
 
-    if credentials.get("type") != "service_account":
-        raise ValueError("The JSON must contain a GCP service account")
     google_credentials = gcp_credentials(credentials)
     project = resourcemanager_v3.ProjectsClient(
         credentials=google_credentials
     ).get_project(name=f"projects/{project_id}")
+    identity = (
+        credentials.get("client_email")
+        or credentials.get("account")
+        or "Google user credentials"
+    )
     return {
         "scope_id": project.project_id,
-        "identity": credentials.get("client_email", "Service account"),
-        "credential_hint": credentials.get("client_email", "Service account"),
+        "identity": identity,
+        "credential_hint": identity,
     }

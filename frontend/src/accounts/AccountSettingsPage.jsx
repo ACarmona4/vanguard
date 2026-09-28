@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Cloud,
+  CircleCheck,
   FlaskConical,
   KeyRound,
   LoaderCircle,
@@ -32,7 +33,12 @@ const initialAWS = {
   secret_access_key: "",
   session_token: "",
 };
-const initialGCP = { name: "", project_id: "", service_account_json: "" };
+const initialGCP = {
+  name: "",
+  project_id: "",
+  service_account_json: "",
+  credential_filename: "",
+};
 
 function statusName(status) {
   return (
@@ -176,8 +182,12 @@ export default function AccountSettingsPage() {
         } catch {
           throw new Error("The GCP JSON file or content is invalid.");
         }
-        payload = { provider, ...gcp, service_account_json: serviceAccount };
-        delete payload.service_account_json_text;
+        payload = {
+          provider,
+          name: gcp.name,
+          project_id: gcp.project_id,
+          service_account_json: serviceAccount,
+        };
       }
       const saved = editingId
         ? await updateConnection(editingId, payload)
@@ -221,12 +231,13 @@ export default function AccountSettingsPage() {
 
   function readServiceAccount(event) {
     const file = event.target.files?.[0];
-    if (!file) return;
+    if (!file || gcp.credential_filename) return;
     const reader = new FileReader();
     reader.onload = () =>
       setGCP((current) => ({
         ...current,
         service_account_json: String(reader.result),
+        credential_filename: file.name,
       }));
     reader.readAsText(file);
   }
@@ -478,21 +489,23 @@ export default function AccountSettingsPage() {
                   placeholder="my-project-123"
                 />
               </label>
-              <label className="file-field">
-                Service account JSON file
-                <span className="file-button">
-                  <Upload size={15} /> Select JSON
+              <label className={`file-field ${gcp.credential_filename ? "loaded" : ""}`}>
+                GCP credential JSON file
+                <span className={gcp.credential_filename ? "file-loaded" : "file-button"}>
+                  {gcp.credential_filename ? <CircleCheck size={16} /> : <Upload size={15} />}
+                  {gcp.credential_filename || "Select JSON"}
                 </span>
                 <input
                   required={!gcp.service_account_json}
                   type="file"
                   accept="application/json,.json"
                   onChange={readServiceAccount}
+                  disabled={Boolean(gcp.credential_filename)}
                 />
                 <small>
                   {gcp.service_account_json
-                    ? "JSON loaded and ready to validate."
-                    : "The private key is encrypted before it is saved."}
+                    ? "Credential loaded and ready to validate."
+                    : "Service account or Application Default Credentials."}
                 </small>
               </label>
             </div>

@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { getInventory } from "./api";
 import { typeName } from "./resourceNames";
+import { groupedOptions, resourceGroupName } from "./resourceTypes";
 import { date, number, time } from "../shared/utils/format";
 import Metric from "../shared/components/Metric";
 import Filter from "../shared/components/Filter";
@@ -99,6 +100,7 @@ export default function InventoryPage() {
     by_region: [],
     by_account: [],
   };
+  const typeOptions = provider === "all" ? groupedOptions(options.by_type) : options.by_type;
   const activeFilters = Object.values(filters).some(Boolean);
   const topTypes = [...summary.by_type]
     .sort((a, b) => b.count - a.count)
@@ -197,8 +199,8 @@ export default function InventoryPage() {
             <Filter
               label="Resource type"
               value={filters.resource_type}
-              options={options.by_type}
-              format={typeName}
+              options={typeOptions}
+              format={(value) => resourceGroupName(value) || typeName(value)}
               onChange={(value) => changeFilter("resource_type", value)}
             />
             <Filter

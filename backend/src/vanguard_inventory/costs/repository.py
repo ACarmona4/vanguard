@@ -192,30 +192,46 @@ def collection_start(connection, connection_id: str, end: date) -> date:
     return end - timedelta(days=7 if has_history else 180)
 
 
-def overview(connection, *, owner_id: str, days: int, provider: str) -> dict[str, Any]:
+def overview(
+    connection,
+    *,
+    owner_id: str,
+    days: int,
+    provider: str,
+    infrastructure: str | None = None,
+) -> dict[str, Any]:
     end = date.today() + timedelta(days=1)
     start = end - timedelta(days=days)
     previous_start = start - timedelta(days=days)
     provider_clause = "AND provider = %s" if provider != "all" else ""
+    infrastructure_column = "category" if provider == "all" else "service"
+    infrastructure_clause = (
+        f"AND {infrastructure_column} = %s" if infrastructure else ""
+    )
+    filter_clause = f"{provider_clause} {infrastructure_clause}"
     base_values: list[Any] = [owner_id, start, end]
     if provider != "all":
         base_values.append(provider)
+    if infrastructure:
+        base_values.append(infrastructure)
 
     current = connection.execute(f"""
         SELECT currency, COALESCE(sum(amount), 0) AS amount
         FROM cost_records
         WHERE owner_id = %s AND level = 'service'
-          AND usage_date >= %s AND usage_date < %s {provider_clause}
+          AND usage_date >= %s AND usage_date < %s {filter_clause}
         GROUP BY currency ORDER BY currency
     """, base_values).fetchall()
     previous_values: list[Any] = [owner_id, previous_start, start]
     if provider != "all":
         previous_values.append(provider)
+    if infrastructure:
+        previous_values.append(infrastructure)
     previous = connection.execute(f"""
         SELECT currency, COALESCE(sum(amount), 0) AS amount
         FROM cost_records
         WHERE owner_id = %s AND level = 'service'
-          AND usage_date >= %s AND usage_date < %s {provider_clause}
+          AND usage_date >= %s AND usage_date < %s {filter_clause}
         GROUP BY currency
     """, previous_values).fetchall()
     previous_by_currency = {row["currency"]: row["amount"] for row in previous}
@@ -236,7 +252,7 @@ def overview(connection, *, owner_id: str, days: int, provider: str) -> dict[str
             SELECT {column} AS name, currency, sum(amount) AS amount
             FROM cost_records
             WHERE owner_id = %s AND level = 'service'
-              AND usage_date >= %s AND usage_date < %s {provider_clause}
+              AND usage_date >= %s AND usage_date < %s {filter_clause}
             GROUP BY {column}, currency ORDER BY amount DESC {limit_sql}
         """, base_values).fetchall()
         return [{**row, "amount": float(row["amount"])} for row in rows]
@@ -245,7 +261,7 @@ def overview(connection, *, owner_id: str, days: int, provider: str) -> dict[str
         SELECT usage_date AS date, currency, sum(amount) AS amount
         FROM cost_records
         WHERE owner_id = %s AND level = 'service'
-          AND usage_date >= %s AND usage_date < %s {provider_clause}
+          AND usage_date >= %s AND usage_date < %s {filter_clause}
         GROUP BY usage_date, currency ORDER BY usage_date, currency
     """, base_values).fetchall()
     trend_index = {
@@ -271,6 +287,7 @@ def overview(connection, *, owner_id: str, days: int, provider: str) -> dict[str
           WHERE r.owner_id = %s AND r.level = 'resource'
             AND r.usage_date >= %s AND r.usage_date < %s
             {"AND r.provider = %s" if provider != "all" else ""}
+            {f"AND r.{infrastructure_column} = %s" if infrastructure else ""}
           GROUP BY r.owner_id, r.connection_id, r.provider, r.service,
                    r.category, r.currency, r.resource_id
         )
@@ -290,14 +307,25 @@ def overview(connection, *, owner_id: str, days: int, provider: str) -> dict[str
         SELECT count(DISTINCT (service, currency)) AS count
         FROM cost_records
         WHERE owner_id = %s AND level = 'service'
-          AND usage_date >= %s AND usage_date < %s {provider_clause}
+          AND usage_date >= %s AND usage_date < %s {filter_clause}
     """, base_values).fetchone()["count"]
     estimated = connection.execute(f"""
         SELECT COALESCE(bool_or(estimated), FALSE) AS estimated
         FROM cost_records
         WHERE owner_id = %s AND level = 'service'
-          AND usage_date >= %s AND usage_date < %s {provider_clause}
+          AND usage_date >= %s AND usage_date < %s {filter_clause}
     """, base_values).fetchone()["estimated"]
+    option_values: list[Any] = [owner_id, start, end]
+    if provider != "all":
+        option_values.append(provider)
+    option_rows = connection.execute(f"""
+        SELECT DISTINCT {infrastructure_column} AS value
+        FROM cost_records
+        WHERE owner_id = %s AND level = 'service'
+          AND usage_date >= %s AND usage_date < %s {provider_clause}
+          AND {infrastructure_column} IS NOT NULL
+        ORDER BY value
+    """, option_values).fetchall()
     sources = list_sources(connection, owner_id)
     return {
         "period": {"start": start, "end": end - timedelta(days=1), "days": days},
@@ -313,5 +341,6 @@ def overview(connection, *, owner_id: str, days: int, provider: str) -> dict[str
         "top_resources": [{**row, "amount": float(row["amount"])} for row in resource_rows],
         "service_count": service_count,
         "estimated": estimated,
+        "infrastructure_options": [row["value"] for row in option_rows],
         "sources": sources,
     }

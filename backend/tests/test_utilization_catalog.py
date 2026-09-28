@@ -1,6 +1,21 @@
 import unittest
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
+from vanguard_inventory.taxonomy import resource_types_for
 from vanguard_inventory.utilization.catalog import metrics_for
+from vanguard_inventory.utilization.service import query_series
+
+
+class _PrometheusResponse:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return b'{"status":"success","data":{"resultType":"matrix","result":[]}}'
 
 
 class NativeMetricsCatalogTests(unittest.TestCase):
@@ -24,6 +39,30 @@ class NativeMetricsCatalogTests(unittest.TestCase):
         keys = {metric.key for metric in metrics}
         self.assertIn("memory_percent", keys)
         self.assertIn("filesystem_percent", keys)
+
+    def test_shared_filters_group_equivalent_cloud_resources(self):
+        self.assertEqual(
+            set(resource_types_for("instances")),
+            {"ec2_instance", "compute_instance"},
+        )
+        self.assertEqual(
+            set(resource_types_for("databases")),
+            {"dynamodb_table", "cloudsql_instance"},
+        )
+        self.assertIsNone(resource_types_for("ec2_instance"))
+
+    @patch("vanguard_inventory.utilization.service.urlopen", return_value=_PrometheusResponse())
+    def test_prometheus_query_is_scoped_to_the_authenticated_owner(self, mocked_open):
+        resources = [
+            {"owner_id": "owner-a", "provider": "aws", "scope_id": "123", "region": region,
+             "resource_type": "ec2_instance", "resource_id": resource_id}
+            for region, resource_id in (("us-east-1", "i-1"), ("us-west-2", "i-2"))
+        ]
+
+        query_series(resources)
+
+        query = parse_qs(urlparse(mocked_open.call_args.args[0]).query)["query"][0]
+        self.assertIn('owner_id="owner-a"', query)
 
 
 if __name__ == "__main__":

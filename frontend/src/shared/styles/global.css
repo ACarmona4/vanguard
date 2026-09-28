@@ -1080,6 +1080,19 @@ pre {
   color: #62646b !important;
   cursor: pointer;
 }
+.file-loaded {
+  width: 100%;
+  border: 1px solid #86efac;
+  border-radius: 7px;
+  padding: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  overflow-wrap: anywhere;
+  background: #f0fdf4;
+  color: #166534 !important;
+}
 .security-note {
   display: flex;
   gap: 10px;
@@ -1185,10 +1198,6 @@ pre {
   justify-content: center;
   gap: 10px;
   margin: 28px 0 18px;
-}
-.cloud-access-help {
-  color: #9a9ca2;
-  font-size: 9px;
 }
 .cloud-access-loading {
   color: #83858c;
@@ -1488,6 +1497,7 @@ pre {
 :root[data-theme="dark"] .utilization-notice { background: #422006; border-color: #a16207; color: #fef08a; }
 :root[data-theme="dark"] .notification.error,
 :root[data-theme="dark"] .error { background: #450a0a; border-color: #991b1b; color: #fecaca; }
+:root[data-theme="dark"] .file-loaded { background: #052e16; border-color: #166534; color: #bbf7d0 !important; }
 
 @media (max-width: 800px) {
   .account-center-grid { grid-template-columns: 1fr; }

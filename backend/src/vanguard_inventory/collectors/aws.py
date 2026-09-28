@@ -13,20 +13,18 @@ def _tags(tags: list[dict[str, str]] | None) -> dict[str, str]:
 class AWSCollector:
     def __init__(
         self,
-        profile: str | None = None,
+        credentials: dict[str, str],
         regions: Iterable[str] | None = None,
-        credentials: dict[str, str] | None = None,
     ):
         import boto3
 
-        if credentials:
-            self.session = boto3.Session(
-                aws_access_key_id=credentials["access_key_id"],
-                aws_secret_access_key=credentials["secret_access_key"],
-                aws_session_token=credentials.get("session_token") or None,
-            )
-        else:
-            self.session = boto3.Session(profile_name=profile) if profile else boto3.Session()
+        if not credentials:
+            raise ValueError("Saved AWS credentials are required")
+        self.session = boto3.Session(
+            aws_access_key_id=credentials["access_key_id"],
+            aws_secret_access_key=credentials["secret_access_key"],
+            aws_session_token=credentials.get("session_token") or None,
+        )
         self.account_id = self.session.client("sts").get_caller_identity()["Account"]
         requested = [region.strip() for region in regions or [] if region.strip()]
         self.regions = requested or ([self.session.region_name] if self.session.region_name else [])

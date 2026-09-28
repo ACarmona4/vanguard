@@ -26,6 +26,7 @@ def create_router(database_dependency, write_database_dependency, user_dependenc
             owner_id=str(user["id"]),
             days=query.days,
             provider=query.provider,
+            infrastructure=query.infrastructure,
         )
 
     @router.get("/sources", response_model=list[CostSourceResponse])

@@ -3,20 +3,26 @@
 from psycopg import Connection, sql
 
 from .schemas import InventorySummary, ResourceFilters, ResourcePage, ResourceQuery
+from .taxonomy import resource_types_for
 
 
 def _where(filters: ResourceFilters, owner_id: str) -> tuple[sql.Composed, dict]:
+    grouped_types = resource_types_for(filters.resource_type)
     values = {
         field: getattr(filters, field)
         for field in ResourceFilters.model_fields
         if getattr(filters, field) is not None
         and not (field == "provider" and filters.provider == "all")
+        and not (field == "resource_type" and grouped_types)
     }
     values["owner_id"] = owner_id
     clauses = [
         sql.SQL("{} = {}").format(sql.Identifier(field), sql.Placeholder(field))
         for field in values
     ]
+    if grouped_types:
+        clauses.append(sql.SQL("resource_type = ANY(%(resource_types)s)"))
+        values["resource_types"] = list(grouped_types)
     return (sql.SQL(" AND ").join(clauses) if clauses else sql.SQL("TRUE")), values
 
 
