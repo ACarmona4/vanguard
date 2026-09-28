@@ -13,56 +13,9 @@ import {
 } from "lucide-react";
 import Notification from "../shared/components/Notification";
 import { date } from "../shared/utils/format";
+import CostTrend from "./components/CostTrend";
+import { costDay, money } from "./format";
 import { configureGcpCosts, syncCosts, useCosts } from "./api";
-
-function money(amount, currency = "USD") {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    maximumFractionDigits: amount < 10 ? 2 : 0,
-  }).format(amount || 0);
-}
-
-function day(value) {
-  return value
-    ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(
-        new Date(`${value}T00:00:00`),
-      )
-    : "—";
-}
-
-function CostTrend({ points, currency }) {
-  const selected = points.filter((point) => point.currency === currency);
-  if (!selected.length) return <div className="cost-empty-chart">No cost history yet.</div>;
-  const width = 760;
-  const height = 220;
-  const values = selected.map((point) => point.amount);
-  const maximum = Math.max(...values, 0.01);
-  const minimum = Math.min(...values, 0);
-  const range = Math.max(maximum - minimum, 0.01);
-  const coordinates = selected.map((point, index) => {
-    const x = 16 + (index / Math.max(selected.length - 1, 1)) * (width - 32);
-    const y = 18 + ((maximum - point.amount) / range) * (height - 48);
-    return [x, y, point];
-  });
-  const line = coordinates.map(([x, y]) => `${x},${y}`).join(" ");
-  const area = `16,${height - 30} ${line} ${width - 16},${height - 30}`;
-  return (
-    <div className="cost-chart-wrap">
-      <svg className="cost-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Daily cost trend">
-        <line x1="16" y1={height - 30} x2={width - 16} y2={height - 30} className="cost-axis" />
-        <polygon points={area} className="cost-area" />
-        <polyline points={line} className="cost-line" />
-        {coordinates.map(([x, y, point]) => (
-          <circle key={`${point.date}-${point.currency}`} cx={x} cy={y} r="3" className="cost-point">
-            <title>{`${point.date}: ${money(point.amount, point.currency)}`}</title>
-          </circle>
-        ))}
-      </svg>
-      <div className="chart-caption"><span>{day(selected[0].date)}</span><span>Max. {money(maximum, currency)}</span><span>{day(selected.at(-1).date)}</span></div>
-    </div>
-  );
-}
 
 function Breakdown({ title, items, currency, onSelect, selected }) {
   const filtered = items.filter((item) => item.currency === currency);
@@ -162,7 +115,7 @@ export default function CostsPage() {
       </div>
 
       <section className="metrics cost-metrics">
-        <article className="metric"><div className="metric-label">Spend <Coins size={16} /></div><div className="metric-value">{loading ? "—" : money(total?.amount, currency)}</div><span className="muted">{data ? `${data.estimated ? "Estimated · " : ""}${day(data.period.start)} – ${day(data.period.end)}` : "Selected period"}</span></article>
+        <article className="metric"><div className="metric-label">Spend <Coins size={16} /></div><div className="metric-value">{loading ? "—" : money(total?.amount, currency)}</div><span className="muted">{data ? `${data.estimated ? "Estimated · " : ""}${costDay(data.period.start)} – ${costDay(data.period.end)}` : "Selected period"}</span></article>
         <article className="metric"><div className="metric-label">Change {total?.change_percent > 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}</div><div className={`metric-value ${total?.change_percent > 0 ? "cost-increase" : "cost-decrease"}`}>{total?.change_percent == null ? "—" : `${total.change_percent > 0 ? "+" : ""}${total.change_percent.toFixed(1)}%`}</div><span className="muted">Against previous period</span></article>
         <article className="metric"><div className="metric-label">Daily average <CalendarDays size={16} /></div><div className="metric-value">{loading ? "—" : money(average, currency)}</div><span className="muted">Across the selected period</span></article>
         <article className="metric"><div className="metric-label">Costed services <Server size={16} /></div><div className="metric-value">{loading ? "—" : data?.service_count || 0}</div><span className="muted">Services in this period</span></article>
