@@ -5,6 +5,29 @@ from typing import Any
 
 from ..models import CollectionResult, Resource
 
+DISABLED_SERVICE_REASONS = {"SERVICE_DISABLED", "accessNotConfigured"}
+
+
+def _has_disabled_service_reason(value: Any) -> bool:
+    if isinstance(value, dict):
+        if value.get("reason") in DISABLED_SERVICE_REASONS:
+            return True
+        return any(_has_disabled_service_reason(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_has_disabled_service_reason(item) for item in value)
+    return False
+
+
+def _service_is_disabled(error: Exception) -> bool:
+    response = getattr(error, "response", None)
+    if response is not None:
+        try:
+            if _has_disabled_service_reason(response.json()):
+                return True
+        except (AttributeError, ValueError):
+            pass
+    return _has_disabled_service_reason(getattr(error, "errors", None))
+
 
 def _message_to_dict(message: Any) -> dict[str, Any]:
     from google.protobuf.json_format import MessageToDict
@@ -39,7 +62,8 @@ class GCPCollector:
             try:
                 result.extend(collector())
             except Exception as exc:  # one unavailable API must not hide other assets
-                result.errors.append(f"{name}: {type(exc).__name__}: {exc}")
+                if not _service_is_disabled(exc):
+                    result.errors.append(f"{name}: {type(exc).__name__}: {exc}")
         return result
 
     def instances(self) -> list[Resource]:
