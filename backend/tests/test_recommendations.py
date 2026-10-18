@@ -9,12 +9,11 @@ from urllib.parse import parse_qs, urlparse
 
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from vanguard.recommendations.api import build_report, create_router
+from vanguard.recommendations.analysis import evaluate_inventory
+from vanguard.recommendations.api import create_router
 from vanguard.recommendations.engine import evaluate
 from vanguard.recommendations.schemas import (
     Finding,
-    RecommendationQuery,
-    Report,
 )
 from vanguard.recommendations.telemetry import query_history
 from vanguard.utilization.catalog import IDENTITY_LABELS
@@ -92,7 +91,8 @@ class RecommendationEngineTests(unittest.TestCase):
         finding = findings["filesystem_percent_oversized"]
         self.assertIn("100 GB", finding["description"])
         self.assertIn("5.0 GB", finding["description"])
-        self.assertIn("storage-shrink eligibility", finding["actions"][1])
+        self.assertIn("minimum size", finding["actions"][1])
+        self.assertIn("downtime", finding["actions"][1])
 
     def test_oversized_storage_is_not_recommended_when_a_weekly_peak_needs_it(self):
         findings, _ = self.run_engine([series(self.item, "filesystem_percent", [5] * 4)],
@@ -159,7 +159,7 @@ class RecommendationEngineTests(unittest.TestCase):
         findings, _ = self.run_engine([series(self.item, "network_out_bytes_per_second", [4 * 1024 * 1024] * 4)],
                                       [series(self.item, "network_out_bytes_per_second", [1024 * 1024] * 168, history=True)])
         finding = findings["network_out_bytes_per_second_growth"]
-        self.assertIn("not proven link saturation", finding["description"])
+        self.assertIn("bandwidth limit", finding["actions"][1])
         self.assertEqual(finding["kind"], "recommendation")
 
     def test_queue_and_delivery_alerts(self):
@@ -217,42 +217,40 @@ class RecommendationReportTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 query_history(items)
 
-    @patch("vanguard.recommendations.api.time.time", return_value=NOW)
-    @patch("vanguard.recommendations.api.query_history", return_value=[])
-    @patch("vanguard.recommendations.api.query_series")
-    def test_report_filters_after_summary_and_paginates(self, recent, _history, _time):
+    @patch("vanguard.recommendations.analysis.time.time", return_value=NOW)
+    @patch("vanguard.recommendations.analysis.query_history", return_value=[])
+    @patch("vanguard.recommendations.analysis.query_series")
+    def test_analysis_returns_every_finding_for_persistence(self, recent, _history, _time):
         item = resource()
         recent.return_value = [series(item, "cpu_percent", [95] * 4)]
         connection = MagicMock()
         connection.execute.return_value.fetchall.return_value = [item]
-        report = build_report(connection, "owner-a", RecommendationQuery(kind="alert", limit=1))
-        Report.model_validate(report)
-        self.assertEqual(report["total"], 1)
-        self.assertEqual(len(report["items"]), 1)
+        report = evaluate_inventory(connection, "owner-a")
+        self.assertTrue(any(item["kind"] == "alert" for item in report["items"]))
+        self.assertGreater(len(report["items"]), 1)
         self.assertGreater(report["summary"]["suggestions"], 0)
         self.assertEqual(connection.execute.call_args.args[1]["owner_id"], "owner-a")
 
-    @patch("vanguard.recommendations.api.query_history")
-    @patch("vanguard.recommendations.api.query_series", side_effect=MetricsUnavailable("offline"))
+    @patch("vanguard.recommendations.analysis.query_history")
+    @patch("vanguard.recommendations.analysis.query_series", side_effect=MetricsUnavailable("offline"))
     def test_prometheus_outage_is_visible_and_does_not_fake_health(self, _recent, historical):
         connection = MagicMock()
         connection.execute.return_value.fetchall.return_value = [resource()]
-        report = build_report(connection, "owner-a", RecommendationQuery())
-        Report.model_validate(report)
+        report = evaluate_inventory(connection, "owner-a")
         self.assertEqual(report["telemetry_status"], "unavailable")
         self.assertTrue(report["notices"])
         self.assertEqual(report["summary"]["without_data"], 1)
         historical.assert_not_called()
 
-    @patch("vanguard.recommendations.api.time.time", return_value=NOW)
-    @patch("vanguard.recommendations.api.query_history", side_effect=MetricsUnavailable("history offline"))
-    @patch("vanguard.recommendations.api.query_series")
+    @patch("vanguard.recommendations.analysis.time.time", return_value=NOW)
+    @patch("vanguard.recommendations.analysis.query_history", side_effect=MetricsUnavailable("history offline"))
+    @patch("vanguard.recommendations.analysis.query_series")
     def test_history_outage_preserves_live_alerts(self, recent, _history, _time):
         item = resource()
         recent.return_value = [series(item, "cpu_percent", [95] * 4)]
         connection = MagicMock()
         connection.execute.return_value.fetchall.return_value = [item]
-        report = build_report(connection, "owner-a", RecommendationQuery())
+        report = evaluate_inventory(connection, "owner-a")
         self.assertEqual(report["telemetry_status"], "partial")
         self.assertEqual(report["summary"]["alerts"], 1)
         self.assertFalse(any(f["rule"] == "insufficient_history" for f in report["items"]))
@@ -264,7 +262,9 @@ class RecommendationReportTests(unittest.TestCase):
         def unauthorized():
             raise HTTPException(401, "Authentication required")
         app = FastAPI()
-        app.include_router(create_router(Annotated[object, Depends(database)], Annotated[dict, Depends(unauthorized)]))
+        database_type = Annotated[object, Depends(database)]
+        user_type = Annotated[dict, Depends(unauthorized)]
+        app.include_router(create_router(database_type, database_type, user_type, user_type))
         with TestClient(app) as client:
             self.assertEqual(client.get("/api/recommendations").status_code, 401)
             self.assertEqual(client.get("/api/recommendations/summary").status_code, 401)

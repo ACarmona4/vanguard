@@ -1,75 +1,170 @@
-"""Owner-scoped reports evaluated from existing inventory and Prometheus."""
+"""Persistent recommendations and explicit, role-checked workflow actions."""
 
-import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import APIRouter, Query
-from psycopg import sql
+from fastapi import APIRouter, HTTPException, Query
 
-from ..inventory.repository import _where
-from ..utilization.catalog import metrics_for
-from ..utilization.service import MetricsUnavailable, query_series
+from ..accounts.auth import reserve_attempt
+from ..organizations.repository import ADMIN_ROLES
 from ..utilization.worker import metrics_worker
-from .engine import INACTIVE, evaluate
+from . import repository
+from .engine import evaluate
 from .policy import DEFAULT_POLICY, SOURCES
-from .schemas import RecommendationQuery, Report
-from .telemetry import query_history
+from .schemas import (
+    Decision,
+    FindingDetail,
+    PriorityChange,
+    RecommendationQuery,
+    Report,
+    StoredFinding,
+)
+from .worker import collect_workspace
 
 
-def build_report(connection, owner_id, query):
-    where, values = _where(query, owner_id)
-    rows = connection.execute(sql.SQL(
-        "SELECT id, owner_id, provider, scope_id, region, resource_type, resource_id, "
-        "name, status, attributes, jsonb_build_object('Attachments', raw_data->'Attachments', "
-        "'settings', jsonb_build_object('dataDiskSizeGb', raw_data#>'{{settings,dataDiskSizeGb}}')) AS raw_data, "
-        "last_seen_at FROM inventory_resources WHERE {} ORDER BY id"
-    ).format(where), values).fetchall()
-    metric_rows = [row for row in rows if metrics_for(row) and (row.get("status") or "").lower() not in INACTIVE]
-    now = time.time()
-    recent, history, notices = [], [], []
-    available, historical = True, True
-    try:
-        recent = query_series(metric_rows)
-    except MetricsUnavailable:
-        available = False
-        notices.append("Live telemetry is unavailable. Utilization alerts and optimization checks could not be evaluated; this does not mean resources are healthy.")
-    if available:
-        try:
-            history = query_history(metric_rows, now=now)
-        except MetricsUnavailable as exc:
-            historical = False
-            notices.append(str(exc))
-    items, summary = evaluate(rows, recent, history, now=now,
-                              telemetry_available=available, history_available=historical)
-    collection = metrics_worker.snapshot(owner_id)
-    if collection["status"] in {"partial", "error", "disabled"}:
-        notices.append("Metric collection needs attention. Check Utilization for collection details.")
-    filtered = [item for item in items if all(
-        getattr(query, key) is None or item[key] == getattr(query, key)
-        for key in ("kind", "severity", "category")
-    )]
+def build_report(connection, organization_id, query):
+    saved = connection.execute(
+        "SELECT evaluated_at, report FROM recommendation_evaluations WHERE organization_id = %s",
+        (organization_id,),
+    ).fetchone()
+    now = datetime.now(timezone.utc)
+    if saved:
+        report = dict(saved["report"])
+        report["generated_at"] = saved["evaluated_at"]
+        report["analysis_status"] = (
+            "stale"
+            if (now - saved["evaluated_at"]).total_seconds() > 900
+            else "current"
+        )
+        if report["analysis_status"] == "stale":
+            report["notices"] = [
+                *report["notices"],
+                "Results are more than 15 minutes old. Run a new analysis to update them.",
+            ]
+    else:
+        _, summary = evaluate([], [], [])
+        report = {
+            "generated_at": now,
+            "analysis_status": "pending",
+            "telemetry_status": "unavailable",
+            "notices": [
+                "No results yet. Run an analysis to get started."
+            ],
+            "collection": metrics_worker.snapshot(str(organization_id)),
+            "summary": summary,
+            "policy": asdict(DEFAULT_POLICY),
+            "sources": SOURCES,
+        }
+    report["summary"] = {
+        **report["summary"],
+        **repository.open_summary(connection, organization_id, query),
+    }
+    items, total = repository.list_findings(connection, organization_id, query)
     return {
-        "generated_at": datetime.fromtimestamp(now, timezone.utc),
-        "telemetry_status": "unavailable" if not available else "partial" if not historical or collection["status"] in {"partial", "error", "disabled"} else "available",
-        "notices": notices, "collection": collection, "summary": summary,
-        "items": filtered[query.offset:query.offset + query.limit], "total": len(filtered),
-        "offset": query.offset, "limit": query.limit,
-        "policy": asdict(DEFAULT_POLICY), "sources": SOURCES,
+        **report,
+        "items": items,
+        "total": total,
+        "limit": query.limit,
+        "offset": query.offset,
     }
 
 
-def create_router(database_dependency, user_dependency):
+def create_router(
+    database_dependency, write_dependency, user_dependency, operator_dependency
+):
     router = APIRouter(prefix="/api/recommendations", tags=["recommendations"])
 
     @router.get("", response_model=Report)
-    def recommendations(connection: database_dependency, user: user_dependency,
-                        query: Annotated[RecommendationQuery, Query()]):
-        return build_report(connection, str(user["organization_id"]), query)
+    def recommendations(
+        connection: database_dependency,
+        user: user_dependency,
+        query: Annotated[RecommendationQuery, Query()],
+    ):
+        return build_report(connection, user["organization_id"], query)
 
     @router.get("/summary", response_model=Report)
     def summary(connection: database_dependency, user: user_dependency):
-        return build_report(connection, str(user["organization_id"]), RecommendationQuery(limit=3))
+        return build_report(
+            connection, user["organization_id"], RecommendationQuery(limit=3)
+        )
+
+    @router.post("/sync", response_model=Report)
+    def sync(connection: write_dependency, user: operator_dependency):
+        if not reserve_attempt(
+            connection,
+            "recommendation-analysis",
+            str(user["organization_id"]),
+            limit=5,
+            window_seconds=300,
+        ):
+            raise HTTPException(
+                429,
+                "Too many analysis requests. Try again in a few minutes.",
+            )
+        collect_workspace(connection, user["organization_id"])
+        return build_report(connection, user["organization_id"], RecommendationQuery())
+
+    @router.get("/{finding_id}", response_model=FindingDetail)
+    def detail(
+        finding_id: UUID,
+        connection: database_dependency,
+        user: user_dependency,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        row = repository.get_finding(connection, user["organization_id"], finding_id)
+        if not row:
+            raise HTTPException(404, "Recommendation not found")
+        events, total = repository.history(
+            connection, user["organization_id"], finding_id, limit, offset
+        )
+        return {
+            "finding": repository.public_finding(row),
+            "events": events,
+            "total_events": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    def apply_change(connection, user, finding_id, payload, *, prioritize=False):
+        try:
+            result = repository.change(
+                connection,
+                user["organization_id"],
+                finding_id,
+                payload,
+                user,
+                prioritize=prioritize,
+            )
+        except repository.Conflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if result is None:
+            raise HTTPException(404, "Recommendation not found")
+        connection.commit()
+        return result
+
+    @router.put("/{finding_id}/priority", response_model=StoredFinding)
+    def prioritize(
+        finding_id: UUID,
+        payload: PriorityChange,
+        connection: write_dependency,
+        user: operator_dependency,
+    ):
+        return apply_change(connection, user, finding_id, payload, prioritize=True)
+
+    @router.post("/{finding_id}/decisions", response_model=StoredFinding)
+    def decide(
+        finding_id: UUID,
+        payload: Decision,
+        connection: write_dependency,
+        user: operator_dependency,
+    ):
+        if payload.action in {"approve", "reject"} and user["role"] not in ADMIN_ROLES:
+            raise HTTPException(
+                403, "An administrator must approve or reject this action."
+            )
+        return apply_change(connection, user, finding_id, payload)
 
     return router

@@ -18,6 +18,7 @@ from vanguard.inventory.models import Resource
 from vanguard.inventory.schemas import ResourceQuery
 from vanguard.labs import service as deployments
 from vanguard.organizations import repository as organizations
+from vanguard.recommendations import repository as recommendations
 
 TEST_URL = os.getenv("VANGUARD_TEST_DATABASE_URL")
 
@@ -30,6 +31,7 @@ def bootstrap(connection):
     deployments.ensure_table(connection)
     costs.ensure_schema(connection)
     organizations.ensure_schema(connection)
+    recommendations.ensure_schema(connection)
     connection.commit()
 
 
@@ -287,12 +289,14 @@ class OrganizationsIntegrationTests(unittest.TestCase):
         self.login(self.alice, self.company)
         with (
             patch(
-                "vanguard.recommendations.api.query_series", return_value=[]
+                "vanguard.recommendations.analysis.query_series", return_value=[]
             ),
             patch(
-                "vanguard.recommendations.api.query_history", return_value=[]
+                "vanguard.recommendations.analysis.query_history", return_value=[]
             ),
         ):
+            synced = self.write("POST", "/api/recommendations/sync")
+            self.assertEqual(synced.status_code, 200, synced.text)
             result = self.client.get("/api/recommendations")
         self.assertEqual(result.status_code, 200, result.text)
         self.assertEqual(result.json()["summary"]["resources"], 1)

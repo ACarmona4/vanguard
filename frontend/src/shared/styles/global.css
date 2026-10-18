@@ -1783,3 +1783,18 @@ pre {
 .workspace strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace small a { text-decoration: underline; }
 @media (max-width: 1000px) { .organization-grid { grid-template-columns: 1fr; } }
+
+.recommendation-filters { flex-wrap: wrap; }
+.finding-priority { color: var(--text); font-weight: 600; }
+.recommendation-workflow { padding-top: 16px; border-top: 1px solid var(--border); }
+.recommendation-workflow-form { margin-top: 18px; display: grid; gap: 16px; }
+.recommendation-workflow-form label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--muted); }
+.recommendation-workflow-form textarea, .recommendation-workflow-form select { width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 10px; background: var(--surface); color: var(--text); font: inherit; }
+.recommendation-workflow-form textarea { min-height: 90px; resize: vertical; }
+.recommendation-criteria { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.recommendation-workflow-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.recommendation-timeline { margin-top: 20px; padding-left: 22px; font-size: 12px; }
+.recommendation-timeline > li { border-left: 2px solid var(--border); margin: 12px 0; padding: 8px 12px; }
+@media (max-width: 600px) {
+  .recommendation-criteria { grid-template-columns: 1fr; }
+}

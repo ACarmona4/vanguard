@@ -78,7 +78,9 @@ from .labs.schemas import (
 )
 from .organizations import repository as organizations
 from .organizations.api import create_router as organizations_router
+from .recommendations import repository as recommendation_repository
 from .recommendations.api import create_router as recommendations_router
+from .recommendations.worker import recommendation_worker
 from .utilization.api import create_router as utilization_router
 from .utilization.worker import metrics_worker
 
@@ -100,6 +102,7 @@ async def lifespan(_app: FastAPI):
             lab_deployments.ensure_table(connection)
             cost_repository.ensure_schema(connection)
             organizations.ensure_schema(connection)
+            recommendation_repository.ensure_schema(connection)
             connection.commit()
     cloud_collection_scheduler.configure()
     task = None
@@ -109,9 +112,11 @@ async def lifespan(_app: FastAPI):
         )
     metrics_task = asyncio.create_task(metrics_worker.run(), name="utilization-collector")
     costs_task = asyncio.create_task(cost_worker.run(), name="cost-collector")
+    recommendations_task = asyncio.create_task(recommendation_worker.run(), name="recommendation-engine")
     try:
         yield
     finally:
+        await stop_scheduler(recommendations_task)
         await stop_scheduler(metrics_task)
         await stop_scheduler(costs_task)
         await stop_scheduler(task)
@@ -209,7 +214,7 @@ AdminUser = Annotated[dict, Depends(require_admin)]
 ReadAdminUser = Annotated[dict, Depends(require_read_admin)]
 OperatorUser = Annotated[dict, Depends(require_operator)]
 app.include_router(utilization_router(Database, CurrentUser))
-app.include_router(recommendations_router(Database, CurrentUser))
+app.include_router(recommendations_router(Database, WriteDatabase, CurrentUser, OperatorUser))
 app.include_router(costs_router(Database, WriteDatabase, CurrentUser, OperatorUser, AdminUser))
 app.include_router(organizations_router(Database, WriteDatabase, CurrentUser, ProtectedUser, AdminUser, ReadAdminUser))
 

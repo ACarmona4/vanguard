@@ -47,4 +47,4 @@ def query_history(resources, *, now=None, policy=DEFAULT_POLICY):
             raise ValueError("Incomplete metric history")
         return body["data"]["result"]
     except Exception as exc:
-        raise MetricsUnavailable("Historical metrics are unavailable; optimization checks are paused.") from exc
+        raise MetricsUnavailable("Usage history is unavailable. Try again later.") from exc

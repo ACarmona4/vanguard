@@ -121,7 +121,7 @@ export default function CostsPage() {
         <article className="metric"><div className="metric-label">Spend <Coins size={16} /></div><div className="metric-value">{loading ? "—" : money(total?.amount, currency)}</div><span className="muted">{data ? `${data.estimated ? "Estimated · " : ""}${costDay(data.period.start)} – ${costDay(data.period.end)}` : "Selected period"}</span></article>
         <article className="metric"><div className="metric-label">Change {total?.change_percent > 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}</div><div className={`metric-value ${total?.change_percent > 0 ? "cost-increase" : "cost-decrease"}`}>{total?.change_percent == null ? "—" : `${total.change_percent > 0 ? "+" : ""}${total.change_percent.toFixed(1)}%`}</div><span className="muted">Against previous period</span></article>
         <article className="metric"><div className="metric-label">Daily average <CalendarDays size={16} /></div><div className="metric-value">{loading ? "—" : money(average, currency)}</div><span className="muted">Across the selected period</span></article>
-        <article className="metric"><div className="metric-label">Costed services <Server size={16} /></div><div className="metric-value">{loading ? "—" : data?.service_count || 0}</div><span className="muted">Services in this period</span></article>
+        <article className="metric"><div className="metric-label">Billed services <Server size={16} /></div><div className="metric-value">{loading ? "—" : data?.service_count || 0}</div><span className="muted">Services in this period</span></article>
       </section>
 
       <section className="cost-panel cost-trend-panel">

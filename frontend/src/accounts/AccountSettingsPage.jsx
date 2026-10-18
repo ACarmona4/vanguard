@@ -535,8 +535,8 @@ export default function AccountSettingsPage() {
                 />
                 <small>
                   {gcp.service_account_json
-                    ? "Credential loaded and ready to validate."
-                    : "Service account or Application Default Credentials."}
+                    ? "File uploaded."
+                    : "Upload a credentials JSON file."}
                 </small>
               </label>
             </div>
@@ -545,8 +545,7 @@ export default function AccountSettingsPage() {
           <div className="security-note">
             <ShieldCheck size={17} />
             <span>
-              <strong>Read-only access.</strong> Use the minimum policy included
-              in the project and temporary credentials whenever possible.
+              <strong>Read-only access.</strong> Use temporary credentials where possible.
             </span>
           </div>
           <div className="form-actions">
@@ -573,7 +572,7 @@ export default function AccountSettingsPage() {
 
       {admin && <section className="lab-panel">
         <div className="section-heading">
-          <div><h2>Disposable infrastructure lab</h2><p className="muted">Deploy or destroy a temporary environment.</p></div>
+          <div><h2>Temporary lab</h2><p className="muted">Deploy or destroy a temporary environment.</p></div>
           <FlaskConical size={20} />
         </div>
         <div className="lab-controls">
@@ -581,9 +580,9 @@ export default function AccountSettingsPage() {
             <option value="">Select a cloud connection</option>
             {connections.filter((connection) => !deployments.some((item) => item.connection_id === connection.id)).map((connection) => <option key={connection.id} value={connection.id}>{connection.name} · {connection.provider.toUpperCase()}</option>)}
           </select>
-          <button className="button primary" disabled={!labConnection || labBusy} onClick={createLab}>Deploy dummy lab</button>
+          <button className="button primary" disabled={!labConnection || labBusy} onClick={createLab}>Deploy lab</button>
         </div>
-        <p className="security-note"><ShieldCheck size={17} /><span>Creates billable cloud resources tagged as disposable.</span></p>
+        <p className="security-note"><ShieldCheck size={17} /><span>Cloud charges apply while the lab is running.</span></p>
         <div className="connection-list">
           {deployments.map((deployment) => {
             const connection = connections.find((item) => item.id === deployment.connection_id);

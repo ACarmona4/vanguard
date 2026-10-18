@@ -29,17 +29,17 @@ export default function CloudAccessRequired({ reason, connections, onRetry }) {
         <span className="eyebrow">SETUP REQUIRED</span>
         <h1>
           {verificationFailed
-            ? "We could not verify your connections"
+            ? "Connection status unavailable"
             : credentialsFailed
-              ? "Cloud credentials are unavailable"
+              ? "Cloud connection failed"
               : "Connect a cloud account to get started"}
         </h1>
         <p>
           {verificationFailed
-            ? "The application could not retrieve the connection status. Make sure the API and PostgreSQL are available."
+            ? "Try again in a moment. If the issue continues, contact your administrator."
             : credentialsFailed
-              ? "All configured connections have errors. Update the credentials to regain access to the dashboard and inventory."
-              : "Before using the dashboard, inventory, and utilization, configure at least one AWS account or Google Cloud project."}
+              ? "Check the credentials for the connections below."
+              : "Connect an AWS account or a Google Cloud project to view your infrastructure."}
         </p>
 
         {credentialsFailed && unavailable.length > 0 && (

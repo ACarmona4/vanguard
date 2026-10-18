@@ -60,7 +60,7 @@ export default function OrganizationPage() {
       </article>
       <article className="dashboard-panel">
         <h2>Members and access</h2>
-        <p className="organization-description">Owners and administrators manage cloud connections, labs and membership. Members can synchronize costs. Viewers can read data. Personal account settings remain available to every role.</p>
+        <p className="organization-description">Admins manage connections, members and approvals. Members can review recommendations and record approved changes. Viewers have read-only access.</p>
         {admin ? <>
           <div className="organization-list">{members.map((member) => <div key={member.user_id}>
             <div><strong>{member.full_name}</strong><small>{member.email}</small></div>

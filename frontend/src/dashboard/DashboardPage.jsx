@@ -166,7 +166,7 @@ export default function DashboardPage() {
       <section className="dashboard-grid dashboard-inventory-grid" aria-label="Inventory overview">
         <article className="dashboard-panel">
           <div className="dashboard-panel-heading">
-            <div><span className="dashboard-section-label">INVENTORY</span><h2>Resource composition</h2></div>
+            <div><span className="dashboard-section-label">INVENTORY</span><h2>Resources by type</h2></div>
             <a href="#inventory">View all <ArrowUpRight size={14} /></a>
           </div>
           <div className="dashboard-type-list">

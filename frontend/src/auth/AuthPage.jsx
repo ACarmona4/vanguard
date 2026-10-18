@@ -60,7 +60,7 @@ export default function AuthPage() {
   }
 
   const title = mode === "signup" ? "Create your account" : mode === "forgot" ? "Reset your password" : mode === "reset" ? "Choose a new password" : "Welcome back";
-  const subtitle = mode === "signup" ? "Manage infrastructure in isolated organizations with shared access and roles." : mode === "forgot" ? "We will send a time-limited reset link if the account exists." : mode === "reset" ? "Use at least 10 characters." : "Sign in to manage your organizations' infrastructure.";
+  const subtitle = mode === "signup" ? "Create a workspace for your team." : mode === "forgot" ? "Enter your email to request a reset link." : mode === "reset" ? "Use at least 10 characters." : "Manage your cloud infrastructure.";
 
   return (
     <main className="auth-page">
@@ -81,7 +81,7 @@ export default function AuthPage() {
         <div className="auth-links">
           {mode === "login" ? <><button onClick={() => setMode("forgot")}>Forgot password?</button><button onClick={() => setMode("signup")}>Create account</button></> : <button onClick={() => { setMode("login"); setError(""); }}><ArrowLeft size={13} /> Back to sign in</button>}
         </div>
-        <small className="auth-security"><ShieldCheck size={13} /> Secure sessions · isolated account data</small>
+        <small className="auth-security"><ShieldCheck size={13} /> Company workspaces</small>
       </section>
     </main>
   );

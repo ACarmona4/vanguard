@@ -11,9 +11,9 @@ from .policy import DEFAULT_POLICY
 VM_TYPES = {"ec2_instance", "compute_instance"}
 INACTIVE = {"stopped", "stopping", "terminated", "terminating", "suspended", "suspending", "deleting"}
 PRESSURE = {
-    "cpu_percent": ("CPU", "performance", "Profile the busiest processes and queries; check latency and CPU credits before scaling."),
-    "memory_percent": ("Memory", "performance", "Check working set, cache behavior and memory leaks; evaluate more memory if pressure persists."),
-    "filesystem_percent": ("Storage", "capacity", "Review retention, reclaim disposable data and plan additional storage before capacity runs out."),
+    "cpu_percent": ("CPU", "performance", "Review the processes or queries using the most CPU."),
+    "memory_percent": ("Memory", "performance", "Review memory use and check for leaks."),
+    "filesystem_percent": ("Storage", "capacity", "Review data retention and plan more storage."),
 }
 
 
@@ -54,6 +54,8 @@ def _finding(resource, rule, kind, severity, category, title, description, actio
         "id": f"{resource['id']}:{rule}", "rule": rule, "kind": kind, "severity": severity,
         "category": category, "title": title, "description": description, "actions": actions,
         "resource_id": resource["id"], "resource_name": resource.get("name") or resource["resource_id"],
+        "cloud_resource_id": resource["resource_id"],
+        "resource_status": resource.get("status"),
         **{key: resource.get(key) for key in ("provider", "resource_type", "scope_id", "region")},
         "evidence": {"metric": metric, "value": value, "unit": unit, "threshold": threshold,
                      "samples": len(points), "window": window,
@@ -69,12 +71,12 @@ def _pressure(resource, metric, points, policy):
     critical = minimum >= policy.critical_percent
     threshold = policy.critical_percent if critical else policy.warning_percent
     return _finding(resource, f"{metric}_high", "alert", "critical" if critical else "warning", category,
-                    f"{label} utilization is {'critical' if critical else 'high'}",
-                    f"Every observation remained at or above {threshold:g}% for {policy.sustained_minutes} minutes.",
-                    [action, "Validate workload peaks and availability requirements before changing capacity."],
+                    f"{'Critical' if critical else 'High'} {label if label == 'CPU' else label.lower()} usage",
+                    f"{label} usage stayed at {minimum:.1f}% or higher for {policy.sustained_minutes} minutes.",
+                    [action, "Check peak demand before changing capacity."],
                     metric=metric, points=points, value=minimum, unit="%", threshold=threshold,
                     window=f"{policy.sustained_minutes}m",
-                    explanation="Minimum across the sustained window ending at the last observation; isolated spikes do not trigger this alert.")
+                    explanation="The value shown is the lowest reading in this period.")
 
 
 def _storage_forecast(resource, current, history):
@@ -97,10 +99,10 @@ def _storage_forecast(resource, current, history):
     if hours > 24:
         return None
     return _finding(resource, "storage_exhaustion", "recommendation", "warning", "capacity",
-                    "Storage may fill within 24 hours", f"At the observed trend, remaining space may run out in about {hours:.1f} hours.",
-                    ["Check recent data growth and retention jobs.", "Prepare a capacity increase or safe cleanup; recheck the trend after changes."],
+                    "Storage may fill within 24 hours", f"Storage could be full in about {hours:.1f} hours if growth continues at the current rate.",
+                    ["Check what is causing storage to grow.", "Increase storage or remove data that is no longer needed after checking backups."],
                     metric="hours_to_full", points=points, value=hours, unit="h", threshold=24, window="24h",
-                    explanation="Linear extrapolation of hourly storage peaks (R² ≥ 0.7); an estimate, not a guarantee.")
+                    explanation="Estimated from storage growth over the last 24 hours.")
 
 
 def _cost_reviews(resource, fresh, historical, policy):
@@ -118,16 +120,16 @@ def _cost_reviews(resource, fresh, historical, policy):
             # Never recommend a smaller instance while another known resource is pressured.
             if p95 >= policy.low_cpu_p95 or peak >= policy.low_cpu_peak or other_pressure or max(v for _, v in fresh[metric]) >= policy.low_cpu_peak:
                 continue
-            actions = ["Compare a smaller instance or CPU tier against representative workload peaks.",
-                       "Validate memory, network, disk I/O, CPU credits, redundancy and licensing before resizing."]
-            description = f"P95 of hourly CPU peaks is {p95:.1f}% and the maximum is {peak:.1f}% over seven days. Capacity may be oversized."
+            actions = ["Review a smaller instance or CPU tier.",
+                       "Check memory, network, I/O, CPU credits, availability and licensing before resizing."]
+            description = f"CPU usage was usually {p95:.1f}% or lower over the last 7 days."
             value, threshold = p95, policy.low_cpu_p95
         else:
             if peak >= policy.low_storage_peak or max(v for _, v in fresh[metric]) >= policy.low_storage_peak:
                 continue
-            actions = ["Compare provisioned capacity with data growth, retention and required free space.",
-                       "For Cloud SQL, check storage-shrink eligibility and the provider's minimum target size; shrinking requires downtime and can reduce I/O performance. Consider migration when appropriate."]
-            description = f"Storage never exceeded {peak:.1f}% in the observed week; at least {100 - peak:.1f}% of capacity stayed unused."
+            actions = ["Check data growth and backup retention before reducing storage.",
+                       "Check Cloud SQL's minimum size and shrink support. Allow for downtime and lower I/O performance."]
+            description = f"Peak storage usage was {peak:.1f}% over the last 7 days."
             raw = resource.get("raw_data") or {}
             capacity = (raw.get("settings") or {}).get("dataDiskSizeGb")
             try:
@@ -135,12 +137,14 @@ def _cost_reviews(resource, fresh, historical, policy):
             except (TypeError, ValueError):
                 capacity = None
             if capacity is not None and math.isfinite(capacity) and capacity > 0:
-                description += f" Provisioned: {capacity:g} GB; latest estimated usage: {capacity * fresh[metric][-1][1] / 100:.1f} GB."
+                description += f" Latest usage: approximately {capacity * fresh[metric][-1][1] / 100:.1f} GB of {capacity:g} GB allocated."
             value, threshold = peak, policy.low_storage_peak
         findings.append(_finding(resource, f"{metric}_oversized", "recommendation", "info", "cost",
-                                 f"Review overprovisioned {label.lower()} capacity", description, actions,
+                                 f"Low {label if label == 'CPU' else label.lower()} usage", description, actions,
                                  metric=metric, points=points, value=value, unit="%", threshold=threshold, window="7d",
-                                 explanation="At least 80% of hourly buckets across a weekly cycle; each bucket contains ≥6 source samples. Savings depend on provider pricing and workload constraints."))
+                                 explanation=(f"95% of hourly CPU peaks were at or below {p95:.1f}%. Highest peak: {peak:.1f}%." if metric == "cpu_percent"
+                                              else "The value shown is the highest hourly storage reading.")
+                                             + f" Based on {len(points)} hourly readings over seven days."))
     return findings
 
 
@@ -156,10 +160,10 @@ def _network_changes(resource, readings, historical, now, policy):
         minimum = min(value for _, value in sustained)
         if minimum >= threshold:
             findings.append(_finding(resource, metric + "_growth", "recommendation", "warning", "performance",
-                                     "Network traffic is above its usual range", "Sustained traffic exceeds the weekly baseline. This indicates a traffic change, not proven link saturation.",
-                                     ["Check traffic sources, replication, backups and egress costs.", "Compare traffic with the provider's actual bandwidth limit before increasing capacity."],
+                                     "Higher network traffic", "Traffic stayed above its usual weekly range for 15 minutes.",
+                                     ["Check the source of the extra traffic and its transfer costs.", "Check the link's bandwidth limit before adding capacity."],
                                      metric=metric, points=sustained, value=minimum, unit="B/s", threshold=threshold,
-                                     explanation="Minimum over 15m ≥3× P95 of historical hourly peaks (excluding the last 3h), with a 1 MiB/s floor."))
+                                     explanation=f"Traffic stayed at or above {minimum / 1024**2:.1f} MiB/s. The weekly reference rate is {usual / 1024**2:.1f} MiB/s."))
     return findings
 
 
@@ -176,11 +180,12 @@ def _delivery_alerts(resource, readings, now, policy):
         if minimum < warning or (warning == 0 and minimum == 0):
             continue
         findings.append(_finding(resource, metric + "_high", "alert", "critical" if critical and minimum >= critical else "warning", "reliability",
-                                 title, "The condition persisted across the observation window.",
-                                 ["Check consumers, delivery errors, retry policies and dead-letter queues.", "Adjust the threshold to the queue's processing SLO."],
+                                 title, (f"Message wait time stayed at {minimum:g} seconds or more for 15 minutes." if metric == "oldest_message_seconds"
+                                         else f"At least {minimum:g} deliveries per second failed for 15 minutes."),
+                                 ["Check consumers, retries and the dead-letter queue.", "Review the queue's delivery target and capacity."],
                                  metric=metric, points=sustained, value=minimum, unit="s" if critical else "messages/s",
                                  threshold=critical if critical and minimum >= critical else warning,
-                                 explanation="Minimum across 15m of recent samples; queue age thresholds are product defaults, not universal SLOs."))
+                                 explanation="The value shown is the lowest reading in the last 15 minutes."))
     return findings
 
 
@@ -189,23 +194,67 @@ def _visibility_suggestions(resource, definitions, fresh, cpu_history, history_a
     missing = [definition.label for definition in definitions if definition.key not in fresh]
     if missing:
         findings.append(_finding(resource, "missing_telemetry", "suggestion", "warning", "observability",
-                                 "Telemetry is missing or stale", "Unavailable signals: " + ", ".join(missing) + ".",
-                                 ["Check the cloud connection, monitoring permissions and collection status.", "Do not interpret missing observations as zero utilization."],
+                                 "Missing metrics", "No recent readings for: " + ", ".join(missing) + ".",
+                                 ["Check the cloud connection and monitoring permissions.", "Restore metric collection before reviewing capacity."],
                                  metric="metric_coverage", value=len(fresh), unit="metrics", window="20m",
-                                 explanation=f"{len(fresh)} of {len(definitions)} supported metrics have a recent observation."))
+                                 explanation=f"{len(fresh)} of {len(definitions)} metrics have recent readings."))
     if resource["resource_type"] in VM_TYPES and fresh:
         findings.append(_finding(resource, "capacity_visibility", "suggestion", "info", "observability",
-                                 "Complete capacity visibility", "Native VM metrics do not include guest memory or filesystem occupancy. Network throughput has no known capacity denominator.",
-                                 ["Review guest memory and filesystem telemetry with an agent before reducing the machine size.", "Confirm the machine's bandwidth limit to assess network saturation; disk I/O does not measure occupied space."],
+                                 "Add memory and disk metrics", "Memory use and disk space are unavailable for this VM.",
+                                 ["Add an agent to collect memory and disk usage.", "Check the VM's network limit before resizing."],
                                  metric="capacity_visibility", window="inventory",
-                                 explanation="A low CPU reading alone cannot prove that the entire machine is oversized."))
+                                 explanation="Review memory, disk and network use before choosing a smaller VM."))
     if "cpu_percent" in fresh and history_available and not _history_ready(cpu_history, policy):
         findings.append(_finding(resource, "insufficient_history", "suggestion", "info", "observability",
-                                 "Collect a representative usage history", "Cost optimization needs a weekly cycle before suggesting a smaller CPU tier.",
-                                 ["Keep telemetry running for at least seven days and include scheduled workload peaks."],
+                                 "Not enough usage history", "At least seven days of CPU data are needed to review a smaller instance.",
+                                 ["Keep collecting metrics for a full week, including scheduled jobs."],
                                  metric="history_coverage", value=len(cpu_history), unit="hours", threshold=math.ceil(policy.history_days * 24 * policy.history_coverage),
-                                 points=cpu_history, window="7d", explanation="At least 80% hourly coverage spanning six days is required; missing data never counts as idle time."))
+                                 points=cpu_history, window="7d", explanation=f"{len(cpu_history)} hourly readings collected. The check needs at least {math.ceil(policy.history_days * 24 * policy.history_coverage)} across the weekly window."))
     return findings
+
+
+def confirmed_checks(resources, recent_series, history_series, *, now, telemetry_available,
+                     history_available, policy=DEFAULT_POLICY):
+    """Rules whose absence is meaningful; outages and sparse samples cannot clear them."""
+    recent, history = indexed_series(recent_series), indexed_series(history_series)
+    checked = set()
+    for resource in resources:
+        prefix = f"{resource['id']}:"
+        seen = resource.get("last_seen_at")
+        if isinstance(seen, str):
+            seen = datetime.fromisoformat(seen.replace("Z", "+00:00"))
+        if (resource["resource_type"] == "ebs_volume" and seen
+                and 0 <= now - seen.timestamp() <= 1800
+                and isinstance((resource.get("raw_data") or {}).get("Attachments"), list)):
+            checked.add(prefix + "unattached_volume")
+        if not telemetry_available or (resource.get("status") or "").lower() in INACTIVE:
+            continue
+        definitions = metrics_for(resource)
+        readings = {definition.key: _points(recent, resource, definition.key, now, 1800) for definition in definitions}
+        fresh = {key: points for key, points in readings.items() if points and now - points[-1][0] <= FRESH_SECONDS}
+        historical = {key: _points(history, resource, key, now, policy.history_days * 86400 + 3600) for key in readings}
+        if definitions:
+            checked.add(prefix + "missing_telemetry")
+        for metric in (*PRESSURE, "oldest_message_seconds", "failed_per_second"):
+            if _sustained(readings.get(metric, []), now, policy):
+                checked.add(prefix + metric + "_high")
+        if history_available:
+            if "cpu_percent" in fresh:
+                checked.add(prefix + "insufficient_history")
+            for metric in ("cpu_percent", "filesystem_percent"):
+                if metric in fresh and _history_ready(historical.get(metric, []), policy):
+                    checked.add(prefix + metric + "_oversized")
+            for metric in ("network_in_bytes_per_second", "network_out_bytes_per_second"):
+                baseline = [point for point in historical.get(metric, []) if point[0] < now - 3 * 3600]
+                if _sustained(readings.get(metric, []), now, policy) and _history_ready(baseline, policy):
+                    checked.add(prefix + metric + "_growth")
+            if "filesystem_percent" in fresh:
+                end = fresh["filesystem_percent"][-1][0]
+                points = [point for point in historical.get("filesystem_percent", []) if end - 86400 <= point[0] <= end]
+                if (len(points) >= 18 and points[-1][0] - points[0][0] >= 18 * 3600
+                        and all(b[0] - a[0] <= 7200 for a, b in zip(points, points[1:]))):
+                    checked.add(prefix + "storage_exhaustion")
+    return sorted(checked)
 
 
 def evaluate(resources, recent_series, history_series, *, now=None, telemetry_available=True,
@@ -255,10 +304,10 @@ def evaluate(resources, recent_series, history_series, *, now=None, telemetry_av
                 and (resource.get("raw_data") or {}).get("Attachments") == []
                 and seen is not None and 0 <= now - seen.timestamp() <= 1800):
             findings.append(_finding(resource, "unattached_volume", "recommendation", "info", "cost",
-                                     "Review an unattached storage volume", "This EBS volume is available and has no attachments, but provisioned storage may still incur charges.",
-                                     ["Confirm ownership, backup policies and any planned reattachment.", "Consider a snapshot and removal only after confirming the data is no longer needed."],
+                                     "Unattached volume", "This volume is not attached to an instance and may still incur storage charges.",
+                                     ["Check whether the volume is still needed.", "Confirm ownership and backups before taking a snapshot or deleting it."],
                                      metric="attachments", value=0, unit="attachments", window="inventory",
-                                     explanation="Based on a fresh inventory snapshot; no inference about filesystem usage or data value."))
+                                     explanation="No attached instances in the latest inventory."))
     findings.sort(key=lambda item: ({"alert": 0, "recommendation": 1, "suggestion": 2}[item["kind"]],
                                     {"critical": 0, "warning": 1, "info": 2}[item["severity"]], item["resource_id"], item["rule"]))
     summary = {"resources": len(resources), "eligible": eligible, "monitored": monitored,

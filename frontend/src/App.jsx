@@ -84,7 +84,7 @@ function Workspace() {
     };
   }, [auth.user?.id]);
 
-  const protectedPage = !["accounts", "organization"].includes(page);
+  const protectedPage = !["accounts", "organization", "recommendations"].includes(page);
   const blocked = protectedPage && !cloudAccess.loading && cloudAccess.reason;
 
   return (

@@ -7,7 +7,7 @@ export default function UtilizationWidgets() {
     [
       "Resources with metrics",
       data ? `${data.monitored} / ${data.eligible}` : "—",
-      "With at least one recent sample",
+      "With recent readings",
     ],
     [
       "Average CPU",
@@ -34,7 +34,7 @@ export default function UtilizationWidgets() {
       <Notification message={error} type="error" />
       {data?.collection?.errors?.length > 0 && (
         <p className="utilization-notice" role="status">
-          Metric collection is partial. See the details under Utilization.
+          Some metrics are missing. Check Utilization for details.
         </p>
       )}
       <div className="metrics utilization-metrics">

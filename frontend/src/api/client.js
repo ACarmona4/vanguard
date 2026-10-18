@@ -27,7 +27,7 @@ export async function apiRequest(path, options = {}) {
     });
   } catch (error) {
     if (error.name === "AbortError") throw error;
-    throw new Error("Unable to connect to the API. Make sure it is running.");
+    throw new Error("Unable to connect. Please try again.");
   }
   if (response.status === 401 && requestToken === csrfToken && requestOrganization === organizationId) {
     window.dispatchEvent(new Event("auth-expired"));
