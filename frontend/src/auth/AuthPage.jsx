@@ -42,7 +42,8 @@ export default function AuthPage() {
           method: "POST",
           body: JSON.stringify({ token, password: values.password }),
         });
-        window.location.hash = "";
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        setValues((current) => ({ ...current, password: "", confirm: "" }));
         setMode("login");
         setNotice("Password updated. You can now sign in.");
       } else if (mode === "signup") {
@@ -59,7 +60,7 @@ export default function AuthPage() {
   }
 
   const title = mode === "signup" ? "Create your account" : mode === "forgot" ? "Reset your password" : mode === "reset" ? "Choose a new password" : "Welcome back";
-  const subtitle = mode === "signup" ? "Your cloud inventory stays isolated from every other account." : mode === "forgot" ? "We will send a time-limited reset link if the account exists." : mode === "reset" ? "Use at least 10 characters." : "Sign in to manage your own infrastructure.";
+  const subtitle = mode === "signup" ? "Manage infrastructure in isolated organizations with shared access and roles." : mode === "forgot" ? "We will send a time-limited reset link if the account exists." : mode === "reset" ? "Use at least 10 characters." : "Sign in to manage your organizations' infrastructure.";
 
   return (
     <main className="auth-page">

@@ -1,7 +1,7 @@
 import UtilizationPage from "./utilization/UtilizationPage";
 import InventoryPage from "./inventory/InventoryPage";
 import AppLayout from "./shared/layout/AppLayout";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import DashboardPage from "./dashboard/DashboardPage";
 import AccountSettingsPage from "./accounts/AccountSettingsPage";
 import CloudAccessRequired from "./accounts/CloudAccessRequired";
@@ -9,18 +9,21 @@ import { listConnections } from "./accounts/api";
 import AuthPage from "./auth/AuthPage";
 import { useAuth } from "./auth/AuthProvider";
 import CostsPage from "./costs/CostsPage";
+import OrganizationPage from "./organizations/OrganizationPage";
+import RecommendationsPage from "./recommendations/RecommendationsPage";
 
 function currentPage() {
-  const page = window.location.hash.replace("#", "");
+  const page = window.location.hash.replace("#", "").split("?")[0];
   if (page === "profile") return "accounts";
-  return ["dashboard", "inventory", "utilization", "costs", "accounts"].includes(page)
+  return ["dashboard", "inventory", "utilization", "costs", "recommendations", "organization", "accounts"].includes(page)
     ? page
     : "dashboard";
 }
 
-export default function App() {
+function Workspace() {
   const auth = useAuth();
   const [page, setPage] = useState(currentPage);
+  const cloudRequest = useRef(null);
   const [cloudAccess, setCloudAccess] = useState({
     loading: true,
     reason: null,
@@ -28,9 +31,13 @@ export default function App() {
   });
 
   async function verifyCloudAccess({ silent = false } = {}) {
+    cloudRequest.current?.abort();
+    const controller = new AbortController();
+    cloudRequest.current = controller;
     if (!silent) setCloudAccess((current) => ({ ...current, loading: true }));
     try {
-      const connections = await listConnections();
+      const connections = await listConnections(controller.signal);
+      if (controller.signal.aborted) return;
       const usable = connections.some(
         (connection) => connection.status !== "error",
       );
@@ -45,6 +52,7 @@ export default function App() {
         connections,
       });
     } catch {
+      if (controller.signal.aborted) return;
       setCloudAccess({
         loading: false,
         reason: "verification-error",
@@ -57,7 +65,6 @@ export default function App() {
     if (!auth.user) return undefined;
     const navigate = () => {
       setPage(currentPage());
-      verifyCloudAccess();
     };
     window.addEventListener("hashchange", navigate);
     window.addEventListener("cloud-connections-changed", verifyCloudAccess);
@@ -68,6 +75,7 @@ export default function App() {
     );
     return () => {
       window.clearInterval(timer);
+      cloudRequest.current?.abort();
       window.removeEventListener("hashchange", navigate);
       window.removeEventListener(
         "cloud-connections-changed",
@@ -76,12 +84,7 @@ export default function App() {
     };
   }, [auth.user?.id]);
 
-  if (auth.loading) {
-    return <main className="auth-page"><div className="cloud-access-loading" role="status">Loading Vanguard…</div></main>;
-  }
-  if (!auth.user) return <AuthPage />;
-
-  const protectedPage = page !== "accounts";
+  const protectedPage = !["accounts", "organization"].includes(page);
   const blocked = protectedPage && !cloudAccess.loading && cloudAccess.reason;
 
   return (
@@ -104,6 +107,10 @@ export default function App() {
         <UtilizationPage />
       ) : page === "costs" ? (
         <CostsPage />
+      ) : page === "recommendations" ? (
+        <RecommendationsPage />
+      ) : page === "organization" ? (
+        <OrganizationPage />
       ) : page === "accounts" ? (
         <AccountSettingsPage />
       ) : (
@@ -111,4 +118,11 @@ export default function App() {
       )}
     </AppLayout>
   );
+}
+
+export default function App() {
+  const auth = useAuth();
+  if (auth.loading) return <main className="auth-page"><p role="status">Loading Vanguard…</p></main>;
+  if (!auth.user) return <AuthPage />;
+  return <Workspace key={`${auth.user.id}:${auth.user.organization_id}`} />;
 }

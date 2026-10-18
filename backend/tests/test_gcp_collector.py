@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock
 
-from vanguard_inventory.collectors.gcp import GCPCollector
+from vanguard.inventory.collectors.gcp import GCPCollector
 
 
 class _Response:
@@ -19,7 +19,7 @@ class _CollectorError(Exception):
 
 
 def _collector_with_sql_error(reason):
-    collector = GCPCollector("test-project")
+    collector = GCPCollector("test-project", credentials=object())
     collector.sql_instances = Mock(side_effect=_CollectorError(reason))
     for method in (
         "instances",

@@ -30,7 +30,7 @@ matches_project_process() {
   cwd="$(process_cwd "$pid")"
 
   if [[ "$kind" == "api" ]]; then
-    [[ "$command" == *"vanguard_inventory.api:app"* || "$cwd" == "$ROOT_DIR" || "$cwd" == "$ROOT_DIR/backend"* ]]
+    [[ "$command" == *"vanguard.api:app"* || "$cwd" == "$ROOT_DIR" || "$cwd" == "$ROOT_DIR/backend"* ]]
   else
     [[ ("$command" == *"$ROOT_DIR/frontend"* && "$command" == *"vite"*) || "$cwd" == "$ROOT_DIR/frontend"* ]]
   fi
@@ -164,7 +164,7 @@ start_all() {
   (
     cd "$ROOT_DIR" || exit 1
     exec env PYTHONPATH="$ROOT_DIR/backend/src" \
-      "$ROOT_DIR/.venv/bin/python" -m uvicorn vanguard_inventory.api:app \
+      "$ROOT_DIR/.venv/bin/python" -m uvicorn vanguard.api:app \
       --app-dir "$ROOT_DIR/backend/src" --reload --host 127.0.0.1 --port "$API_PORT"
   ) &
   local api_pid=$!

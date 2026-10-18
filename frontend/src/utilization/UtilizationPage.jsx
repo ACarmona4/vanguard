@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useUtilization, metricValue } from "./api";
-import { typeName } from "../inventory/resourceNames";
+import { typeName } from "../shared/resources/resourceNames";
 import {
   resourceGroupName,
   utilizationGroups,
   utilizationTypesByProvider,
-} from "../inventory/resourceTypes";
+} from "../shared/resources/resourceTypes";
 import { date } from "../shared/utils/format";
 import Filter from "../shared/components/Filter";
 import Notification from "../shared/components/Notification";
@@ -140,6 +140,10 @@ function ResourceHistory({ id, onClose }) {
 }
 
 export default function UtilizationPage() {
+  const [linkedId, setLinkedId] = useState(() => {
+    const value = new URLSearchParams(window.location.hash.split("?")[1]).get("resource");
+    return value && /^\d+$/.test(value) ? Number(value) : null;
+  });
   const [filters, setFilters] = useState({
     provider: "all",
     resource_type: "",
@@ -173,6 +177,7 @@ export default function UtilizationPage() {
           <p>Real metrics from your cloud machines and services.</p>
         </div>
       </section>
+      {linkedId && <ResourceHistory id={linkedId} onClose={() => setLinkedId(null)} />}
       <div className="filters">
         <Filter
           label="Cloud"

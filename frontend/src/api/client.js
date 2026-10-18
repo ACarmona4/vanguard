@@ -1,18 +1,24 @@
 let csrfToken = "";
+let organizationId = "";
 
-export function setCsrfToken(value) {
+export function setSessionContext(value, organization) {
   csrfToken = value || "";
+    organizationId = organization || "";
 }
 
 export async function apiRequest(path, options = {}) {
   let response;
   const method = options.method || "GET";
+  const requestToken = csrfToken;
+  const requestOrganization = organizationId;
   try {
     response = await fetch(`/api/${path}`, {
       credentials: "same-origin",
+      cache: "no-store",
       ...options,
       headers: {
         ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(organizationId ? { "X-Organization-ID": organizationId } : {}),
         ...(method !== "GET" && csrfToken
           ? { "X-CSRF-Token": csrfToken }
           : {}),
@@ -23,14 +29,15 @@ export async function apiRequest(path, options = {}) {
     if (error.name === "AbortError") throw error;
     throw new Error("Unable to connect to the API. Make sure it is running.");
   }
-  if (response.status === 401) {
+  if (response.status === 401 && requestToken === csrfToken && requestOrganization === organizationId) {
     window.dispatchEvent(new Event("auth-expired"));
   }
   if (!response.ok) {
     let detail = "The operation could not be completed.";
     try {
       const payload = await response.json();
-      detail = payload.detail || detail;
+      if (typeof payload.detail === "string") detail = payload.detail;
+      else if (Array.isArray(payload.detail)) detail = payload.detail.map((item) => item.msg).filter(Boolean).join(". ") || detail;
     } catch {
       // Keep the generic message for non-JSON failures.
     }

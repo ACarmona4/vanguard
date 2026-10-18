@@ -9,6 +9,8 @@ import {
   Moon,
   Sun,
   CircleDollarSign,
+  Lightbulb,
+  Building2,
 } from "lucide-react";
 import { useAuth } from "../../auth/AuthProvider";
 export default function AppLayout({ children, page }) {
@@ -19,6 +21,8 @@ export default function AppLayout({ children, page }) {
     accounts: "Accounts",
     utilization: "Utilization",
     costs: "Costs",
+    recommendations: "Recommendations",
+    organization: "Organization",
   }[page];
   return (
     <div className="app-shell">
@@ -32,8 +36,8 @@ export default function AppLayout({ children, page }) {
             <Layers3 size={18} />
           </span>
           <div>
-            <strong>Vanguard</strong>
-            <small>Cloud management</small>
+            <strong>{auth.user.organization_name}</strong>
+            <small>{auth.user.role} · <a href="#organization">Manage organization</a></small>
           </div>
         </div>
         <div className="nav-label">GENERAL</div>
@@ -66,6 +70,10 @@ export default function AppLayout({ children, page }) {
           >
             <CircleDollarSign size={18} /> Costs
           </a>
+          <a href="#recommendations" className={page === "recommendations" ? "nav-active" : ""} aria-current={page === "recommendations" ? "page" : undefined}>
+            <Lightbulb size={18} /> Recommendations
+          </a>
+          <a href="#organization" className={page === "organization" ? "nav-active" : ""} aria-current={page === "organization" ? "page" : undefined}><Building2 size={18} /> Organization</a>
         </nav>
         <a
           href="#accounts"
@@ -88,6 +96,8 @@ export default function AppLayout({ children, page }) {
             <strong>{title}</strong>
           </div>
           <nav className="mobile-nav" aria-label="Main navigation">
+            <a href="#organization" aria-current={page === "organization" ? "page" : undefined}>Organization</a>
+            <a href="#recommendations" aria-current={page === "recommendations" ? "page" : undefined}>Recommendations</a>
             <a
               href="#dashboard"
               aria-current={page === "dashboard" ? "page" : undefined}

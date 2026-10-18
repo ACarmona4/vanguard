@@ -11,6 +11,7 @@ import {
   Server,
   Settings2,
 } from "lucide-react";
+import { useAuth } from "../auth/AuthProvider";
 import Notification from "../shared/components/Notification";
 import { date } from "../shared/utils/format";
 import CostTrend from "./components/CostTrend";
@@ -67,6 +68,8 @@ function GcpSourceForm({ source, onSaved }) {
 }
 
 export default function CostsPage() {
+  const { user } = useAuth();
+  const admin = ["owner", "admin"].includes(user.role);
   const [filters, setFilters] = useState({ days: "30", provider: "all", infrastructure: "" });
   const [category, setCategory] = useState("");
   const [selectedCurrency, setSelectedCurrency] = useState("");
@@ -101,7 +104,7 @@ export default function CostsPage() {
     <main id="costs">
       <section className="page-heading">
         <div><h1>Costs</h1><p>Cloud spend, trends, and cost drivers.</p></div>
-        <button className="button" onClick={synchronize} disabled={syncing}>
+        <button className="button" onClick={synchronize} disabled={syncing || user.role === "viewer"}>
           {syncing ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />} Sync
         </button>
       </section>
@@ -146,7 +149,7 @@ export default function CostsPage() {
       <section className="cost-panel cost-sources">
         <div className="section-heading"><div><h2>Cost sources</h2><p className="muted">AWS Cost Explorer and GCP detailed billing export.</p></div><Settings2 size={18} /></div>
         <div className="connection-list">
-          {(data?.sources || []).map((source) => <article className="cost-source" key={source.connection_id}><div className={`provider-mark ${source.provider}`}>{source.provider.toUpperCase()}</div><div className="connection-info"><div className="connection-title"><strong>{source.connection_name}</strong><span className={`connection-status ${source.status}`}>{source.status}</span></div><small>{source.scope_id}{source.last_synced_at && ` · Synced ${date(source.last_synced_at)}`}</small>{source.last_error && <small className="connection-error">{source.last_error}</small>}{source.provider === "gcp" && <GcpSourceForm source={source} onSaved={reload} />}</div><span className="cost-detail-badge">{source.detail_available ? "Resource detail" : "Service totals"}</span></article>)}
+          {(data?.sources || []).map((source) => <article className="cost-source" key={source.connection_id}><div className={`provider-mark ${source.provider}`}>{source.provider.toUpperCase()}</div><div className="connection-info"><div className="connection-title"><strong>{source.connection_name}</strong><span className={`connection-status ${source.status}`}>{source.status}</span></div><small>{source.scope_id}{source.last_synced_at && ` · Synced ${date(source.last_synced_at)}`}</small>{source.last_error && <small className="connection-error">{source.last_error}</small>}{admin && source.provider === "gcp" && <GcpSourceForm source={source} onSaved={reload} />}</div><span className="cost-detail-badge">{source.detail_available ? "Resource detail" : "Service totals"}</span></article>)}
         </div>
       </section>
     </main>

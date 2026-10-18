@@ -55,6 +55,7 @@ function statusName(status) {
 
 export default function AccountSettingsPage() {
   const auth = useAuth();
+  const admin = ["owner", "admin"].includes(auth.user.role);
   const [connections, setConnections] = useState([]);
   const [deployments, setDeployments] = useState([]);
   const [provider, setProvider] = useState("aws");
@@ -235,6 +236,7 @@ export default function AccountSettingsPage() {
   function readServiceAccount(event) {
     const file = event.target.files?.[0];
     if (!file || gcp.credential_filename) return;
+    if (file.size > 128 * 1024) { setError("Credential files must be smaller than 128 KB."); return; }
     const reader = new FileReader();
     reader.onload = () =>
       setGCP((current) => ({
@@ -291,7 +293,7 @@ export default function AccountSettingsPage() {
     <main id="accounts">
       <section className="page-heading">
         <div>
-          <span className="eyebrow">ADMINISTRATOR</span>
+          <span className="eyebrow">{admin ? "ADMINISTRATOR" : "ACCOUNT"}</span>
           <h1>Profile and cloud connections</h1>
           <p>
             Connect AWS accounts and Google Cloud projects to the inventory.
@@ -373,7 +375,7 @@ export default function AccountSettingsPage() {
                       </small>
                     )}
                   </div>
-                  <div className="connection-actions">
+                  {admin && <div className="connection-actions">
                     <button
                       className="icon-button"
                       aria-label={`Update ${connection.name}`}
@@ -388,14 +390,14 @@ export default function AccountSettingsPage() {
                     >
                       <Trash2 size={16} />
                     </button>
-                  </div>
+                  </div>}
                 </article>
               ))}
             </div>
           )}
         </div>
 
-        <form className="connection-form" onSubmit={submit}>
+        {admin && <form className="connection-form" onSubmit={submit}>
           <div className="form-heading">
             <span className="form-icon">
               <Plus size={18} />
@@ -566,10 +568,10 @@ export default function AccountSettingsPage() {
               )}
             </button>
           </div>
-        </form>
+        </form>}
       </section>
 
-      <section className="lab-panel">
+      {admin && <section className="lab-panel">
         <div className="section-heading">
           <div><h2>Disposable infrastructure lab</h2><p className="muted">Deploy or destroy a temporary environment.</p></div>
           <FlaskConical size={20} />
@@ -592,7 +594,7 @@ export default function AccountSettingsPage() {
             </article>;
           })}
         </div>
-      </section>
+      </section>}
     </main>
   );
 }

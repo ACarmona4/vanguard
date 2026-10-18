@@ -14,11 +14,12 @@ import CostTrend from "../costs/components/CostTrend";
 import { useCosts } from "../costs/api";
 import { money } from "../costs/format";
 import { getInventory } from "../inventory/api";
-import { typeName } from "../inventory/resourceNames";
+import { typeName } from "../shared/resources/resourceNames";
 import Metric from "../shared/components/Metric";
 import Notification from "../shared/components/Notification";
 import { date } from "../shared/utils/format";
 import UtilizationWidgets from "../utilization/UtilizationWidgets";
+import RecommendationWidgets from "../recommendations/RecommendationWidgets";
 
 const COST_FILTERS = Object.freeze({ days: "30", provider: "all", infrastructure: "" });
 
@@ -139,6 +140,8 @@ export default function DashboardPage() {
         <Metric label="Regions" value={summary?.by_region.filter((row) => row.value).length ?? 0} icon={Globe2} caption="With registered resources" loading={!data} />
         <Metric label="Costed services" value={costs?.service_count ?? 0} icon={CircleDollarSign} caption="Reported in the last 30 days" loading={costsLoading} />
       </section>
+
+      <RecommendationWidgets />
 
       <section className="dashboard-grid dashboard-cost-grid" aria-label="Cost overview">
         <article className="dashboard-panel dashboard-trend-panel">

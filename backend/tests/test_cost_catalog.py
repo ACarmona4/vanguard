@@ -1,8 +1,8 @@
 import unittest
 
-from vanguard_inventory.costs.catalog import category_for
-from vanguard_inventory.costs.collectors import validate_gcp_table
-from vanguard_inventory.costs.schemas import CostQuery
+from vanguard.costs.catalog import category_for
+from vanguard.costs.collectors import validate_gcp_table
+from vanguard.costs.schemas import CostQuery
 
 
 class CostCatalogTests(unittest.TestCase):

@@ -1,23 +1,27 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { apiRequest, setCsrfToken } from "../api/client";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { apiRequest, setSessionContext } from "../api/client";
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [state, setState] = useState({ loading: true, user: null });
+  const sessionRevision = useRef(0);
 
   function accept(payload) {
-    setCsrfToken(payload?.csrf_token);
+    sessionRevision.current += 1;
+    setSessionContext(payload?.csrf_token, payload?.user?.organization_id);
     setState({ loading: false, user: payload?.user || null });
   }
 
   useEffect(() => {
-    apiRequest("auth/me")
-      .then(accept)
-      .catch(() => accept(null));
+    const controller = new AbortController();
+    const revision = sessionRevision.current;
+    apiRequest("auth/me", { signal: controller.signal })
+      .then((payload) => { if (!controller.signal.aborted && revision === sessionRevision.current) accept(payload); })
+      .catch(() => { if (!controller.signal.aborted && revision === sessionRevision.current) accept(null); });
     const expired = () => accept(null);
     window.addEventListener("auth-expired", expired);
-    return () => window.removeEventListener("auth-expired", expired);
+    return () => { controller.abort(); window.removeEventListener("auth-expired", expired); };
   }, []);
 
   useEffect(() => {
@@ -46,19 +50,24 @@ export function AuthProvider({ children }) {
         });
         accept(result);
       },
+      async switchOrganization(id) {
+        accept(await apiRequest(`organizations/${id}/switch`, { method: "POST" }));
+      },
       async logout() {
+        const revision = sessionRevision.current;
         try {
           await apiRequest("auth/logout", { method: "POST" });
         } finally {
-          accept(null);
+          if (revision === sessionRevision.current) accept(null);
         }
       },
       async updateProfile(payload) {
+        const revision = sessionRevision.current;
         const user = await apiRequest("account/profile", {
           method: "PUT",
           body: JSON.stringify(payload),
         });
-        setState({ loading: false, user });
+        if (revision === sessionRevision.current) setState({ loading: false, user });
         return user;
       },
     }),

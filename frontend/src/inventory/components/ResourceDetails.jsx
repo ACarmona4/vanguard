@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Box, X } from "lucide-react";
 import { date } from "../../shared/utils/format";
-import { typeName } from "../resourceNames";
+import { typeName } from "../../shared/resources/resourceNames";
 
 export default function ResourceDetails({ resource, onClose }) {
   const dialog = useRef(null);

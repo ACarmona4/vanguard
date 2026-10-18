@@ -13,8 +13,8 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { getInventory } from "./api";
-import { typeName } from "./resourceNames";
-import { groupedOptions, resourceGroupName } from "./resourceTypes";
+import { typeName } from "../shared/resources/resourceNames";
+import { groupedOptions, resourceGroupName } from "../shared/resources/resourceTypes";
 import { date, number, time } from "../shared/utils/format";
 import Metric from "../shared/components/Metric";
 import Filter from "../shared/components/Filter";

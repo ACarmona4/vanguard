@@ -8,7 +8,7 @@ export default function Filter({
   return (
     <label className="filter">
       <span>{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
+      <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
         <option value="">All</option>
         {options
           .filter((item) => item.value != null)

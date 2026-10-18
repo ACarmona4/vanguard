@@ -1,7 +1,11 @@
 import unittest
 
-from vanguard_inventory.accounts.auth import hash_password, normalize_email, verify_password
-from vanguard_inventory.accounts.credentials import (
+from vanguard.accounts.auth import (
+    hash_password,
+    normalize_email,
+    verify_password,
+)
+from vanguard.connections.credentials import (
     CredentialValidationError,
     gcp_credentials,
 )

@@ -2,9 +2,9 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
-from vanguard_inventory.taxonomy import resource_types_for
-from vanguard_inventory.utilization.catalog import metrics_for
-from vanguard_inventory.utilization.service import query_series
+from vanguard.inventory.taxonomy import resource_types_for
+from vanguard.utilization.catalog import metrics_for
+from vanguard.utilization.service import query_series
 
 
 class _PrometheusResponse:
@@ -51,7 +51,7 @@ class NativeMetricsCatalogTests(unittest.TestCase):
         )
         self.assertIsNone(resource_types_for("ec2_instance"))
 
-    @patch("vanguard_inventory.utilization.service.urlopen", return_value=_PrometheusResponse())
+    @patch("vanguard.utilization.service.urlopen", return_value=_PrometheusResponse())
     def test_prometheus_query_is_scoped_to_the_authenticated_owner(self, mocked_open):
         resources = [
             {"owner_id": "owner-a", "provider": "aws", "scope_id": "123", "region": region,
