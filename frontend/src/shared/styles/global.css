@@ -1793,6 +1793,9 @@ pre {
 .recommendation-workflow-form textarea { min-height: 90px; resize: vertical; }
 .recommendation-criteria { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .recommendation-workflow-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.connection-confirm { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-subtle); font-size: 12px; }
+.connection-confirm p { margin: 8px 0 12px; color: var(--muted); line-height: 1.6; }
+.connection-confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .recommendation-timeline { margin-top: 20px; padding-left: 22px; font-size: 12px; }
 .recommendation-timeline > li { border-left: 2px solid var(--border); margin: 12px 0; padding: 8px 12px; }
 @media (max-width: 600px) {

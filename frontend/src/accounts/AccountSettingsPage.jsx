@@ -64,6 +64,9 @@ export default function AccountSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [pendingDisconnect, setPendingDisconnect] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
+  const [pendingLabDestroy, setPendingLabDestroy] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const dismissError = useCallback(() => setError(""), []);
@@ -73,20 +76,24 @@ export default function AccountSettingsPage() {
   const [labConnection, setLabConnection] = useState("");
   const [labBusy, setLabBusy] = useState(false);
   const gcpFileInput = useRef(null);
+  const connectionForm = useRef(null);
+  const loadRevision = useRef(0);
 
   async function load(signal) {
+    const revision = ++loadRevision.current;
     try {
       const [savedConnections, savedDeployments] = await Promise.all([
         listConnections(signal),
         listDeployments(signal),
       ]);
+      if (signal?.aborted || revision !== loadRevision.current) return;
       setConnections(savedConnections);
       setDeployments(savedDeployments);
       setError("");
     } catch (failure) {
-      if (failure.name !== "AbortError") setError(failure.message);
+      if (!signal?.aborted && revision === loadRevision.current) setError(failure.message);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted && revision === loadRevision.current) setLoading(false);
     }
   }
 
@@ -137,8 +144,9 @@ export default function AccountSettingsPage() {
     try {
       const connection = connections.find((item) => item.id === labConnection);
       const deployment = await deployLab(labConnection, connection?.regions?.[0]);
+      loadRevision.current += 1;
       setDeployments((current) => [...current.filter((item) => item.connection_id !== labConnection), deployment]);
-      setNotice("Dummy infrastructure deployment started.");
+      setNotice("Lab deployment started.");
     } catch (failure) {
       setError(failure.message);
     } finally {
@@ -147,13 +155,14 @@ export default function AccountSettingsPage() {
   }
 
   async function removeLab(deployment) {
-    if (!window.confirm("Destroy all infrastructure created by this dummy lab?")) return;
     setLabBusy(true);
     setError("");
     try {
       const updated = await destroyLab(deployment.id);
+      loadRevision.current += 1;
       setDeployments((current) => current.map((item) => item.id === updated.id ? updated : item));
-      setNotice("Infrastructure destruction started.");
+      setPendingLabDestroy(null);
+      setNotice("Lab deletion started.");
     } catch (failure) {
       setError(failure.message);
     } finally {
@@ -195,6 +204,7 @@ export default function AccountSettingsPage() {
       const saved = editingId
         ? await updateConnection(editingId, payload)
         : await createConnection(payload);
+      loadRevision.current += 1;
       setConnections((current) =>
         editingId
           ? current.map((item) => (item.id === editingId ? saved : item))
@@ -214,22 +224,27 @@ export default function AccountSettingsPage() {
   }
 
   async function remove(connection) {
-    if (
-      !window.confirm(
-        `Disconnect ${connection.name}? Its resources will be removed from the inventory.`,
-      )
-    )
-      return;
+    if (deletingId) return;
+    setDeletingId(connection.id);
+    setError("");
+    setNotice("");
     try {
       await deleteConnection(connection.id);
+      loadRevision.current += 1;
       setConnections((current) =>
         current.filter((item) => item.id !== connection.id),
       );
+      setDeployments((current) => current.filter((item) => item.connection_id !== connection.id));
+      setPendingDisconnect(null);
+      if (labConnection === connection.id) setLabConnection("");
+      if (editingId === connection.id) cancelEdit();
       setNotice(`${connection.name} was disconnected.`);
       setError("");
       window.dispatchEvent(new Event("cloud-connections-changed"));
     } catch (failure) {
       setError(failure.message);
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -259,6 +274,7 @@ export default function AccountSettingsPage() {
   }
 
   function edit(connection) {
+    setPendingDisconnect(null);
     setEditingId(connection.id);
     setProvider(connection.provider);
     setError("");
@@ -276,9 +292,15 @@ export default function AccountSettingsPage() {
         project_id: connection.scope_id,
       });
     }
-    document
-      .querySelector(".connection-form")
-      ?.scrollIntoView({ behavior: "smooth" });
+    connectionForm.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function viewLab(connectionId) {
+    setPendingDisconnect(null);
+    const deployment = deployments.find((item) => item.connection_id === connectionId);
+    const element = document.getElementById(`lab-${deployment?.id}`);
+    element?.scrollIntoView({ behavior: "smooth", block: "center" });
+    element?.focus({ preventScroll: true });
   }
 
   function cancelEdit() {
@@ -343,61 +365,82 @@ export default function AccountSettingsPage() {
             </div>
           ) : (
             <div className="connection-list">
-              {connections.map((connection) => (
-                <article className="connection-card" key={connection.id}>
-                  <div className={`provider-mark ${connection.provider}`}>
-                    {connection.provider === "aws" ? "AWS" : "GCP"}
-                  </div>
-                  <div className="connection-info">
-                    <div className="connection-title">
-                      <strong>{connection.name}</strong>
-                      <span
-                        className={`connection-status ${connection.status}`}
-                      >
-                        {statusName(connection.status)}
-                      </span>
+              {connections.map((connection) => {
+                const linkedLab = deployments.find((item) => item.connection_id === connection.id);
+                const blockingLab = linkedLab && linkedLab.cleanup_required !== false;
+                return (
+                  <article className="connection-card" key={connection.id}>
+                    <div className={`provider-mark ${connection.provider}`}>
+                      {connection.provider === "aws" ? "AWS" : "GCP"}
                     </div>
-                    <span className="mono">{connection.scope_id}</span>
-                    <small>{connection.identity}</small>
-                    <small>
-                      Credential: {connection.credential_hint}
-                      {connection.regions.length > 0 &&
-                        ` · ${connection.regions.join(", ")}`}
-                    </small>
-                    {connection.last_synced_at && (
+                    <div className="connection-info">
+                      <div className="connection-title">
+                        <strong>{connection.name}</strong>
+                        <span
+                          className={`connection-status ${connection.status}`}
+                        >
+                          {statusName(connection.status)}
+                        </span>
+                      </div>
+                      <span className="mono">{connection.scope_id}</span>
+                      <small>{connection.identity}</small>
                       <small>
-                        Last sync: {date(connection.last_synced_at)}
+                        Credential: {connection.credential_hint}
+                        {connection.regions.length > 0 &&
+                          ` · ${connection.regions.join(", ")}`}
                       </small>
-                    )}
-                    {connection.last_error && (
-                      <small className="connection-error">
-                        {connection.last_error}
-                      </small>
-                    )}
-                  </div>
-                  {admin && <div className="connection-actions">
-                    <button
-                      className="icon-button"
-                      aria-label={`Update ${connection.name}`}
-                      onClick={() => edit(connection)}
-                    >
-                      <Pencil size={15} />
-                    </button>
-                    <button
-                      className="icon-button danger"
-                      aria-label={`Disconnect ${connection.name}`}
-                      onClick={() => remove(connection)}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>}
-                </article>
-              ))}
+                      {connection.last_synced_at && (
+                        <small>
+                          Last sync: {date(connection.last_synced_at)}
+                        </small>
+                      )}
+                      {connection.last_error && (
+                        <small className="connection-error">
+                          {connection.last_error}
+                        </small>
+                      )}
+                      {pendingDisconnect === connection.id && <div className="connection-confirm" role="group" aria-label={`Disconnect ${connection.name}`}>
+                        <strong>{blockingLab ? "This connection is used by a lab." : `Disconnect ${connection.name}?`}</strong>
+                        <p>{blockingLab
+                          ? connection.status === "error" ? "Update the credentials, then delete the lab before disconnecting." : "Delete the lab before disconnecting."
+                          : `This removes the connection and its inventory from Vanguard. Cloud resources stay in ${connection.provider.toUpperCase()}.`}</p>
+                        {!blockingLab && linkedLab && <p>The failed lab record will also be removed.</p>}
+                        <Notification message={error} type="error" />
+                        <div className="connection-confirm-actions">
+                          {blockingLab ? <>
+                            <button type="button" className="button" onClick={() => viewLab(connection.id)}>View lab</button>
+                            {connection.status === "error" && <button type="button" className="button" onClick={() => edit(connection)}>Update credentials</button>}
+                          </> : <button type="button" className="button danger" disabled={!!deletingId} onClick={() => remove(connection)}>{deletingId === connection.id ? "Disconnecting…" : "Disconnect"}</button>}
+                          <button type="button" className="button" disabled={!!deletingId} onClick={() => { setPendingDisconnect(null); setError(""); }}>Cancel</button>
+                        </div>
+                      </div>}
+                    </div>
+                    {admin && <div className="connection-actions">
+                      <button
+                        className="icon-button"
+                        aria-label={`Update ${connection.name}`}
+                        disabled={!!deletingId}
+                        onClick={() => edit(connection)}
+                      >
+                        <Pencil size={15} />
+                      </button>
+                      <button
+                        className="icon-button danger"
+                        aria-label={`Disconnect ${connection.name}`}
+                        disabled={!!deletingId}
+                        onClick={() => { setPendingDisconnect(connection.id); setPendingLabDestroy(null); setError(""); setNotice(""); }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>}
+                  </article>
+                );
+              })}
             </div>
           )}
         </div>
 
-        {admin && <form className="connection-form" onSubmit={submit}>
+        {admin && <form ref={connectionForm} className="connection-form" onSubmit={submit}>
           <div className="form-heading">
             <span className="form-icon">
               <Plus size={18} />
@@ -586,10 +629,20 @@ export default function AccountSettingsPage() {
         <div className="connection-list">
           {deployments.map((deployment) => {
             const connection = connections.find((item) => item.id === deployment.connection_id);
-            return <article className="connection-card" key={deployment.id}>
+            return <article className="connection-card" id={`lab-${deployment.id}`} tabIndex={-1} key={deployment.id}>
               <div className={`provider-mark ${deployment.provider}`}>{deployment.provider.toUpperCase()}</div>
-              <div className="connection-info"><div className="connection-title"><strong>{connection?.name || "Cloud lab"}</strong><span className={`connection-status ${deployment.status}`}>{deployment.status}</span></div><small>{deployment.region} · Updated {date(deployment.updated_at)}</small>{deployment.last_error && <small className="connection-error">{deployment.last_error}</small>}</div>
-              <button className="button" disabled={labBusy || ["queued", "deploying", "destroying"].includes(deployment.status)} onClick={() => removeLab(deployment)}>Destroy</button>
+              <div className="connection-info"><div className="connection-title"><strong>{connection?.name || "Cloud lab"}</strong><span className={`connection-status ${deployment.status}`}>{deployment.status}</span></div><small>{deployment.region} · Updated {date(deployment.updated_at)}</small>{deployment.last_error && <small className="connection-error">{deployment.last_error}</small>}
+                {pendingLabDestroy === deployment.id && <div className="connection-confirm" role="group" aria-label="Delete lab">
+                  <strong>Delete this lab and its cloud resources?</strong>
+                  <p>All resources created by this lab will be deleted.</p>
+                  <Notification message={error} type="error" />
+                  <div className="connection-confirm-actions">
+                    <button type="button" className="button danger" disabled={labBusy} onClick={() => removeLab(deployment)}>{labBusy ? "Deleting…" : "Delete lab"}</button>
+                    <button type="button" className="button" disabled={labBusy} onClick={() => setPendingLabDestroy(null)}>Cancel</button>
+                  </div>
+                </div>}
+              </div>
+              <button className="button" disabled={labBusy || ["queued", "deploying", "destroying"].includes(deployment.status)} onClick={() => { setPendingDisconnect(null); setPendingLabDestroy(deployment.id); }}>Delete lab</button>
             </article>;
           })}
         </div>

@@ -36,7 +36,18 @@ CREATE TABLE IF NOT EXISTS lab_deployments (
 CREATE INDEX IF NOT EXISTS lab_deployments_owner_idx ON lab_deployments (owner_id);
 """
 
-PUBLIC_COLUMNS = "id, connection_id, provider, region, status, outputs, last_error, created_at, updated_at"
+# Only an explicit empty Terraform state proves a failed lab has no resources.
+# Missing or malformed state remains protected until the lab is cleaned up.
+CLEANUP_REQUIRED_SQL = """NOT COALESCE(
+    status = 'error'
+    AND terraform_state->'version' = '4'::jsonb
+    AND terraform_state->'resources' = '[]'::jsonb,
+    FALSE
+)"""
+PUBLIC_COLUMNS = (
+    "id, connection_id, provider, region, status, outputs, last_error, created_at, updated_at, "
+    + CLEANUP_REQUIRED_SQL + " AS cleanup_required"
+)
 
 
 def ensure_table(connection) -> None:
@@ -51,9 +62,19 @@ def list_deployments(connection, owner_id: str) -> list[dict[str, Any]]:
         ).fetchall()
 
 
+def requires_cleanup(connection, connection_id: str, *, owner_id: str) -> bool:
+    with connection.cursor(row_factory=dict_row) as cursor:
+        row = cursor.execute(
+            f"SELECT {CLEANUP_REQUIRED_SQL} AS cleanup_required FROM lab_deployments "
+            "WHERE connection_id = %s AND owner_id = %s FOR UPDATE",
+            (connection_id, owner_id),
+        ).fetchone()
+    return bool(row and row["cleanup_required"])
+
+
 def queue_deploy(connection, *, owner_id: str, connection_id: str, region: str) -> dict[str, Any]:
     cloud = connection.execute(
-        "SELECT provider FROM cloud_connections WHERE id = %s AND owner_id = %s",
+        "SELECT provider FROM cloud_connections WHERE id = %s AND owner_id = %s FOR UPDATE",
         (connection_id, owner_id),
     ).fetchone()
     if not cloud:

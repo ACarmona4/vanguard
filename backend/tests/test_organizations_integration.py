@@ -489,3 +489,100 @@ class OrganizationsIntegrationTests(unittest.TestCase):
             ).total,
             1,
         )
+
+    def _lab_record(self, status, state):
+        from psycopg.types.json import Jsonb
+        row = self.connection.execute(
+            """INSERT INTO lab_deployments
+            (id, owner_id, connection_id, provider, region, status, terraform_state)
+            VALUES (%s, %s, %s, 'aws', 'us-east-1', %s, %s) RETURNING id""",
+            (uuid4(), self.company['id'], self.cloud['id'], status, Jsonb(state) if state is not None else None),
+        ).fetchone()
+        self.connection.commit()
+        return row['id']
+
+    def test_errored_aws_connection_can_be_deleted_without_valid_cloud_credentials(self):
+        connections.set_connection_status(self.connection, self.cloud['id'], owner_id=self.company['id'],
+                                          status='error', error='Expired credentials')
+        self.login(self.alice, self.company)
+        with (patch('vanguard.api.validate_aws', side_effect=AssertionError('Deletion must not validate credentials')),
+              patch('vanguard.api.lab_deployments.run', side_effect=AssertionError('Deletion must not change cloud resources'))):
+            result = self.write('DELETE', f"/api/cloud-connections/{self.cloud['id']}")
+        self.assertEqual(result.status_code, 204, result.text)
+        self.assertIsNone(connections.get_connection(self.connection, self.cloud['id'], owner_id=self.company['id']))
+        self.assertIsNotNone(connections.get_connection(self.connection, self.other_cloud['id'], owner_id=self.other['id']))
+        self.assertEqual(repository.list_resources(self.connection, ResourceQuery(provider='all'), str(self.company['id'])).total, 0)
+        self.assertEqual(repository.list_resources(self.connection, ResourceQuery(provider='all'), str(self.other['id'])).total, 1)
+
+    def test_errored_connection_with_active_lab_retains_its_state_and_resources(self):
+        state = {'version': 4, 'resources': [{'mode': 'managed', 'instances': [{'attributes': {'id': 'lab-resource'}}]}]}
+        lab_id = self._lab_record('active', state)
+        connections.set_connection_status(self.connection, self.cloud['id'], owner_id=self.company['id'],
+                                          status='error', error='Expired credentials')
+        self.login(self.alice, self.company)
+        listed = self.client.get('/api/lab-deployments')
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertTrue(listed.json()[0]['cleanup_required'])
+        self.assertNotIn('terraform_state', listed.json()[0])
+        result = self.write('DELETE', f"/api/cloud-connections/{self.cloud['id']}")
+        self.assertEqual(result.status_code, 409, result.text)
+        self.assertIn('linked lab', result.json()['detail'])
+        self.assertEqual(self.connection.execute('SELECT terraform_state FROM lab_deployments WHERE id = %s', (lab_id,)).fetchone()['terraform_state'], state)
+        self.assertIsNotNone(connections.get_connection(self.connection, self.cloud['id'], owner_id=self.company['id']))
+
+    def test_failed_lab_with_confirmed_empty_state_does_not_block_disconnection(self):
+        self._lab_record('error', {'version': 4, 'resources': []})
+        self.login(self.alice, self.company)
+        self.assertFalse(self.client.get('/api/lab-deployments').json()[0]['cleanup_required'])
+        result = self.write('DELETE', f"/api/cloud-connections/{self.cloud['id']}")
+        self.assertEqual(result.status_code, 204, result.text)
+        self.assertEqual(self.client.get('/api/lab-deployments').json(), [])
+
+    def test_labs_with_unknown_partial_or_running_state_keep_disconnection_blocked(self):
+        self.login(self.alice, self.company)
+        variants = [
+            ('error', None), ('error', {}), ('error', {'version': 4}),
+            ('error', {'version': 4, 'resources': [{'mode': 'managed', 'instances': [{}]}]}),
+            ('active', {'version': 4, 'resources': []}),
+            ('queued', None), ('deploying', None), ('destroying', None),
+        ]
+        for status, state in variants:
+            with self.subTest(status=status, state=state):
+                lab_id = self._lab_record(status, state)
+                result = self.write('DELETE', f"/api/cloud-connections/{self.cloud['id']}")
+                self.assertEqual(result.status_code, 409, result.text)
+                self.connection.execute('DELETE FROM lab_deployments WHERE id = %s', (lab_id,))
+                self.connection.commit()
+
+    def test_connection_delete_requires_company_admin_and_csrf(self):
+        self.login(self.alice, self.company)
+        self.assertEqual(self.write('DELETE', f"/api/cloud-connections/{self.other_cloud['id']}").status_code, 404)
+        self.assertEqual(self.client.delete(f"/api/cloud-connections/{self.cloud['id']}").status_code, 403)
+        organizations.change_member(self.connection, self.company['id'], self.bob['id'], 'member')
+        self.login(self.bob, self.company)
+        self.assertEqual(self.write('DELETE', f"/api/cloud-connections/{self.cloud['id']}").status_code, 403)
+        self.assertIsNotNone(connections.get_connection(self.connection, self.cloud['id'], owner_id=self.company['id']))
+
+    def test_deploy_and_disconnect_cannot_remove_a_lab_created_concurrently(self):
+        from threading import Barrier
+        barrier = Barrier(2)
+        def operate(action):
+            with psycopg.connect(self.url, row_factory=dict_row) as connection:
+                barrier.wait(timeout=5)
+                try:
+                    if action == 'deploy':
+                        deployments.queue_deploy(connection, owner_id=self.company['id'], connection_id=self.cloud['id'], region='us-east-1')
+                        return 'queued'
+                    connections.delete_connection(connection, self.cloud['id'], owner_id=self.company['id'])
+                    return 'disconnected'
+                except connections.ConnectionInUse:
+                    connection.rollback()
+                    return 'blocked'
+                except LookupError:
+                    connection.rollback()
+                    return 'not_found'
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(operate, ['deploy', 'disconnect']))
+        self.assertIn(outcomes, [['queued', 'blocked'], ['not_found', 'disconnected']])
+        remaining = self.connection.execute('SELECT count(*) AS count FROM lab_deployments WHERE connection_id = %s', (self.cloud['id'],)).fetchone()['count']
+        self.assertEqual(remaining, 1 if outcomes[0] == 'queued' else 0)

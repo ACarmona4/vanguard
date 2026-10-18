@@ -9,6 +9,13 @@ from uuid import uuid4
 
 from psycopg.rows import dict_row
 
+from ..labs.service import requires_cleanup
+
+
+class ConnectionInUse(ValueError):
+    pass
+
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS cloud_connections (
     id UUID PRIMARY KEY,
@@ -140,7 +147,7 @@ def update_connection(
     encrypted_credentials: str,
 ) -> dict[str, Any] | None:
     configured = connection.execute(
-        "SELECT provider, scope_id, regions FROM cloud_connections WHERE id = %s AND owner_id = %s",
+        "SELECT provider, scope_id, regions FROM cloud_connections WHERE id = %s AND owner_id = %s FOR UPDATE",
         (connection_id, owner_id),
     ).fetchone()
     if not configured:
@@ -183,11 +190,13 @@ def update_connection(
 
 def delete_connection(connection, connection_id: str, *, owner_id: str) -> bool:
     configured = connection.execute(
-        "SELECT provider, scope_id FROM cloud_connections WHERE id = %s AND owner_id = %s",
+        "SELECT provider, scope_id FROM cloud_connections WHERE id = %s AND owner_id = %s FOR UPDATE",
         (connection_id, owner_id),
     ).fetchone()
     if not configured:
         return False
+    if requires_cleanup(connection, connection_id, owner_id=owner_id):
+        raise ConnectionInUse("Delete the linked lab before disconnecting this account.")
     connection.execute(
         "DELETE FROM inventory_resources WHERE owner_id = %s AND provider = %s AND scope_id = %s",
         (owner_id, configured["provider"], configured["scope_id"]),

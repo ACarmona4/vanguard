@@ -551,13 +551,11 @@ def cloud_connection_update(
 def cloud_connection_delete(
     connection_id: str, connection: WriteDatabase, user: AdminUser
 ) -> Response:
-    active_lab = connection.execute(
-        "SELECT 1 FROM lab_deployments WHERE connection_id = %s AND owner_id = %s",
-        (connection_id, user["organization_id"]),
-    ).fetchone()
-    if active_lab:
-        raise HTTPException(status_code=409, detail="Destroy the dummy lab before disconnecting this account")
-    if not cloud_connections.delete_connection(connection, connection_id, owner_id=str(user["organization_id"])):
+    try:
+        removed = cloud_connections.delete_connection(connection, connection_id, owner_id=str(user["organization_id"]))
+    except cloud_connections.ConnectionInUse as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not removed:
         raise HTTPException(status_code=404, detail="Cloud connection not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -595,6 +593,8 @@ def lab_deployment_create(
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Cloud connection not found") from exc
     database_url = os.getenv("DATABASE_URL")
     background_tasks.add_task(lab_deployments.run, database_url, str(deployment["id"]), owner_id=str(user["organization_id"]))
     return deployment

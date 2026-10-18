@@ -18,6 +18,7 @@ class LabDeploymentResponse(BaseModel):
     provider: Literal["aws", "gcp"]
     region: str
     status: Literal["queued", "deploying", "active", "destroying", "error"]
+    cleanup_required: bool
     outputs: dict[str, Any]
     last_error: str | None
     created_at: datetime
