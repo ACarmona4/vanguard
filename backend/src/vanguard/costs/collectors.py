@@ -20,7 +20,9 @@ GCP_TABLE_PATTERN = re.compile(
     r"^(?P<project>[a-z][a-z0-9-]{4,62}[a-z0-9])\."
     r"(?P<dataset>[A-Za-z0-9_]+)\.(?P<table>[A-Za-z0-9_]+)$"
 )
-AWS_COST_METRIC = "NetUnblendedCost"
+# Usage cost before credits and refunds, so credit-funded accounts still show consumption.
+AWS_COST_METRIC = "UnblendedCost"
+AWS_USAGE_FILTER = {"Not": {"Dimensions": {"Key": "RECORD_TYPE", "Values": ["Credit", "Refund"]}}}
 
 
 def validate_gcp_table(value: str) -> str:
@@ -67,6 +69,7 @@ def collect_aws(source: dict, credentials: dict, start: date, end: date):
         "TimePeriod": {"Start": start.isoformat(), "End": query_end.isoformat()},
         "Granularity": "DAILY",
         "Metrics": [AWS_COST_METRIC],
+        "Filter": AWS_USAGE_FILTER,
         "GroupBy": [{"Type": "DIMENSION", "Key": "SERVICE"}],
     }
     while True:
@@ -90,9 +93,10 @@ def collect_aws(source: dict, credentials: dict, start: date, end: date):
         "TimePeriod": {"Start": detail_start.isoformat(), "End": query_end.isoformat()},
         "Granularity": "DAILY",
         "Metrics": [AWS_COST_METRIC],
-        "Filter": {"Dimensions": {
-            "Key": "SERVICE", "Values": ["Amazon Elastic Compute Cloud - Compute"]
-        }},
+        "Filter": {"And": [
+            {"Dimensions": {"Key": "SERVICE", "Values": ["Amazon Elastic Compute Cloud - Compute"]}},
+            AWS_USAGE_FILTER,
+        ]},
         "GroupBy": [{"Type": "DIMENSION", "Key": "RESOURCE_ID"}],
     }
     try:
@@ -205,7 +209,7 @@ def collect_gcp(source: dict, credentials: dict, start: date, end: date):
     service_query = f"""
       SELECT DATE(usage_start_time) AS usage_date,
              service.description AS service, location.region AS region, currency,
-             SUM(cost + IFNULL((SELECT SUM(credit.amount) FROM UNNEST(credits) credit), 0)) AS amount
+             SUM(cost) AS amount
       FROM `{table}`
       WHERE {common_where}
       GROUP BY usage_date, service, region, currency
@@ -223,7 +227,7 @@ def collect_gcp(source: dict, credentials: dict, start: date, end: date):
           SELECT DATE(usage_start_time) AS usage_date,
                  service.description AS service, location.region AS region, currency,
                  resource.global_name AS resource_id, ANY_VALUE(resource.name) AS resource_name,
-                 SUM(cost + IFNULL((SELECT SUM(credit.amount) FROM UNNEST(credits) credit), 0)) AS amount
+                 SUM(cost) AS amount
           FROM `{table}`
           WHERE {common_where}
             AND resource.global_name IS NOT NULL AND resource.global_name != ''
