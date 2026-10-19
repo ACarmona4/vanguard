@@ -189,15 +189,27 @@ def _delivery_alerts(resource, readings, now, policy):
     return findings
 
 
-def _visibility_suggestions(resource, definitions, fresh, cpu_history, history_available, policy):
+def _reporting_accounts(recent, now):
+    """Accounts with at least one fresh reading: their connection and permissions work."""
+    return {key[0][:3] for key, points in recent.items()
+            if points and 0 <= now - max(points) <= FRESH_SECONDS}
+
+
+def _visibility_suggestions(resource, definitions, fresh, cpu_history, history_available, policy,
+                            account_reporting=False):
     findings = []
-    missing = [definition.label for definition in definitions if definition.key not in fresh]
+    # Without traffic CloudWatch sends nothing, so silence only means missing data
+    # when the whole account is silent too.
+    required = [definition for definition in definitions
+                if not definition.optional and not (definition.activity and account_reporting)]
+    missing = [definition.label for definition in required if definition.key not in fresh]
+    covered = len(required) - len(missing)
     if missing:
         findings.append(_finding(resource, "missing_telemetry", "suggestion", "warning", "observability",
                                  "Missing metrics", "No recent readings for: " + ", ".join(missing) + ".",
                                  ["Check the cloud connection and monitoring permissions.", "Restore metric collection before reviewing capacity."],
-                                 metric="metric_coverage", value=len(fresh), unit="metrics", window="20m",
-                                 explanation=f"{len(fresh)} of {len(definitions)} metrics have recent readings."))
+                                 metric="metric_coverage", value=covered, unit="metrics", window="20m",
+                                 explanation=f"{covered} of {len(required)} required metrics have recent readings."))
     if resource["resource_type"] in VM_TYPES and fresh:
         findings.append(_finding(resource, "capacity_visibility", "suggestion", "info", "observability",
                                  "Add memory and disk metrics", "Memory use and disk space are unavailable for this VM.",
@@ -262,6 +274,7 @@ def evaluate(resources, recent_series, history_series, *, now=None, telemetry_av
     now = now if now is not None else time.time()
     recent, history = indexed_series(recent_series), indexed_series(history_series)
     findings, eligible, monitored, ready = [], 0, 0, 0
+    reporting = _reporting_accounts(recent, now)
     for resource in resources:
         if (resource.get("status") or "").lower() in INACTIVE:
             continue
@@ -279,7 +292,8 @@ def evaluate(resources, recent_series, history_series, *, now=None, telemetry_av
             ready += 1
         if not telemetry_available:
             continue
-        findings.extend(_visibility_suggestions(resource, definitions, fresh, cpu_history, history_available, policy))
+        findings.extend(_visibility_suggestions(resource, definitions, fresh, cpu_history, history_available, policy,
+                                                identity(resource)[:3] in reporting))
         for metric in PRESSURE:
             sustained = _sustained(readings.get(metric, []), now, policy)
             if sustained:

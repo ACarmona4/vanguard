@@ -27,6 +27,8 @@ class RecommendationQuery(ResourceFilters):
     workflow_status: Literal[
         "open", "all", "detected", "approved", "executed", "rejected"
     ] = "open"
+    # Findings the latest analysis no longer detects stay reviewable, apart from current ones.
+    detection: Literal["current", "cleared", "all"] = "current"
     order_by: Literal["priority", "economic_impact", "business_relevance", "newest"] = (
         "priority"
     )
@@ -136,6 +138,7 @@ class RecommendationSummary(BaseModel):
     critical: int
     warning: int
     info: int
+    cleared: int = 0
 
 
 class Source(BaseModel):

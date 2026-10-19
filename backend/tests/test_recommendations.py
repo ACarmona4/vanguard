@@ -126,6 +126,30 @@ class RecommendationEngineTests(unittest.TestCase):
         self.assertEqual(summary["without_data"], 1)
         self.assertEqual(summary["cost_opportunities"], 0)
 
+    def test_ebs_only_instance_without_local_disk_metrics_is_not_missing_telemetry(self):
+        self.item = resource(provider="aws", resource_type="ec2_instance", status="running")
+        reported = ("cpu_percent", "network_in_bytes_per_second", "network_out_bytes_per_second")
+        findings, _ = self.run_engine([series(self.item, key, [7] * 4) for key in reported])
+        self.assertNotIn("missing_telemetry", findings)
+        findings, _ = self.run_engine([series(self.item, key, [7] * 4) for key in reported[:2]])
+        self.assertEqual(findings["missing_telemetry"]["description"], "No recent readings for: Network out.")
+        self.assertEqual(findings["missing_telemetry"]["evidence"]["explanation"],
+                         "2 of 3 required metrics have recent readings.")
+
+    def test_idle_event_resources_are_not_missing_telemetry_when_the_account_reports(self):
+        topic = resource(provider="aws", resource_type="sns_topic", resource_id="idle-topic", status=None)
+        vm = resource(id=2, provider="aws", resource_type="ec2_instance", resource_id="i-1", status="running")
+        findings, _ = evaluate([topic], [], [], now=NOW)
+        self.assertIn("missing_telemetry", rules(findings))
+        findings, _ = evaluate([topic, vm], [series(vm, "cpu_percent", [7] * 4)], [], now=NOW)
+        self.assertNotIn("missing_telemetry", {f["rule"] for f in findings if f["resource_id"] == topic["id"]})
+        other_account = {**vm, "scope_id": "project-b"}
+        findings, _ = evaluate([topic, other_account], [series(other_account, "cpu_percent", [7] * 4)], [], now=NOW)
+        self.assertIn("missing_telemetry", {f["rule"] for f in findings if f["resource_id"] == topic["id"]})
+        stale = series(vm, "cpu_percent", [7] * 4, stamps=[NOW - 7200 + i * 300 for i in range(4)])
+        findings, _ = evaluate([topic, vm], [stale], [], now=NOW)
+        self.assertIn("missing_telemetry", {f["rule"] for f in findings if f["resource_id"] == topic["id"]})
+
     def test_another_owners_same_cloud_resource_cannot_influence_results(self):
         outsider = resource(owner_id="owner-b")
         findings, summary = self.run_engine([series(outsider, "cpu_percent", [99] * 4)])

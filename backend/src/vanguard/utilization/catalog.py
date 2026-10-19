@@ -11,6 +11,10 @@ class Metric:
     cloud_name: str = ""
     statistic: str = "Average"
     scale: float = 1
+    # Published only for some configurations; never reported as missing telemetry.
+    optional: bool = False
+    # Published only while the resource has traffic; an idle resource reports nothing.
+    activity: bool = False
 
 
 CPU = Metric("cpu_percent", "CPU", "%", "CPUUtilization")
@@ -20,25 +24,27 @@ AWS = {
         CPU,
         Metric("network_in_bytes_per_second", "Network in", "B/s", "NetworkIn", "Sum", 1 / 300),
         Metric("network_out_bytes_per_second", "Network out", "B/s", "NetworkOut", "Sum", 1 / 300),
-        Metric("disk_read_bytes_per_second", "Local disk read", "B/s", "DiskReadBytes", "Sum", 1 / 300),
-        Metric("disk_write_bytes_per_second", "Local disk write", "B/s", "DiskWriteBytes", "Sum", 1 / 300),
+        # CloudWatch reports DiskRead/WriteBytes only for instance store volumes, not EBS-only instances.
+        Metric("disk_read_bytes_per_second", "Local disk read", "B/s", "DiskReadBytes", "Sum", 1 / 300, optional=True),
+        Metric("disk_write_bytes_per_second", "Local disk write", "B/s", "DiskWriteBytes", "Sum", 1 / 300, optional=True),
     )),
     "ebs_volume": ("AWS/EBS", "VolumeId", (
         Metric("disk_read_bytes_per_second", "Disk read", "B/s", "VolumeReadBytes", "Sum", 1 / 300),
         Metric("disk_write_bytes_per_second", "Disk write", "B/s", "VolumeWriteBytes", "Sum", 1 / 300),
         Metric("disk_queue", "Pending operations", "operations", "VolumeQueueLength"),
     )),
+    # CloudWatch stops publishing these when DynamoDB, SQS or SNS see no requests.
     "dynamodb_table": ("AWS/DynamoDB", "TableName", (
-        Metric("read_units_per_second", "Consumed reads", "units/s", "ConsumedReadCapacityUnits", "Sum", 1 / 300),
-        Metric("write_units_per_second", "Consumed writes", "units/s", "ConsumedWriteCapacityUnits", "Sum", 1 / 300),
+        Metric("read_units_per_second", "Consumed reads", "units/s", "ConsumedReadCapacityUnits", "Sum", 1 / 300, activity=True),
+        Metric("write_units_per_second", "Consumed writes", "units/s", "ConsumedWriteCapacityUnits", "Sum", 1 / 300, activity=True),
     )),
     "sqs_queue": ("AWS/SQS", "QueueName", (
-        Metric("queued_messages", "Pending messages", "messages", "ApproximateNumberOfMessagesVisible"),
-        Metric("oldest_message_seconds", "Oldest message age", "s", "ApproximateAgeOfOldestMessage", "Maximum"),
+        Metric("queued_messages", "Pending messages", "messages", "ApproximateNumberOfMessagesVisible", activity=True),
+        Metric("oldest_message_seconds", "Oldest message age", "s", "ApproximateAgeOfOldestMessage", "Maximum", activity=True),
     )),
     "sns_topic": ("AWS/SNS", "TopicName", (
-        Metric("published_per_second", "Published messages", "messages/s", "NumberOfMessagesPublished", "Sum", 1 / 300),
-        Metric("failed_per_second", "Failed deliveries", "messages/s", "NumberOfNotificationsFailed", "Sum", 1 / 300),
+        Metric("published_per_second", "Published messages", "messages/s", "NumberOfMessagesPublished", "Sum", 1 / 300, activity=True),
+        Metric("failed_per_second", "Failed deliveries", "messages/s", "NumberOfNotificationsFailed", "Sum", 1 / 300, activity=True),
     )),
 }
 

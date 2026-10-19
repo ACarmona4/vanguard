@@ -16,7 +16,7 @@ const options = (values) => values.map((value) => ({ value }));
 export default function RecommendationsPage() {
   const { user } = useAuth();
   const operator = ["owner", "admin", "member"].includes(user.role);
-  const [filters, setFilters] = useState({ provider: "all", kind: "", severity: "", category: "", priority: "", workflow_status: "open", order_by: "priority" });
+  const [filters, setFilters] = useState({ provider: "all", kind: "", severity: "", category: "", priority: "", workflow_status: "open", detection: "current", order_by: "priority" });
   const [analyzing, setAnalyzing] = useState(false);
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
@@ -43,6 +43,12 @@ export default function RecommendationsPage() {
     <Notification message={actionError} type="error" /><Notification message={notice} />
     {data?.notices.map((notice) => <Notification key={notice} message={notice} type="warning" />)}
     <RecommendationStats summary={data?.summary} loading={loading || !!error} unavailable={data?.telemetry_status === "unavailable"} />
+    <div className="recommendation-tabs" role="tablist" aria-label="Detection status">
+      {[["current", "Active"], ["cleared", "Resolved"]].map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={filters.detection === value} className={filters.detection === value ? "active" : ""} onClick={() => change("detection", value)}>
+        {label}{value === "cleared" && data?.summary?.cleared ? <span className="recommendation-tab-count">{data.summary.cleared}</span> : null}
+      </button>)}
+    </div>
+    {filters.detection === "cleared" && <p className="muted recommendation-context">The latest analysis no longer detects these. Review them and record the outcome, or leave them here as history.</p>}
     <div className="filters recommendation-filters">
       <Filter label="Cloud" value={filters.provider === "all" ? "" : filters.provider} options={options(["aws", "gcp"])} format={(value) => value.toUpperCase()} onChange={(value) => change("provider", value)} />
       <Filter label="Type" value={filters.kind} options={options(Object.keys(KIND_LABELS))} format={(value) => KIND_LABELS[value]} onChange={(value) => change("kind", value)} />
@@ -57,7 +63,7 @@ export default function RecommendationsPage() {
     <p className="muted recommendation-context">{data ? data.analysis_status === "pending" ? "No results yet." : `${data.total} results · Last analysis ${date(data.generated_at)}` : "Loading saved recommendations…"}</p>
     {loading && <p role="status">Loading recommendations…</p>}
     {data && data.items.length === 0 && <div className="empty-state">
-      <h3>{data.analysis_status === "pending" ? "No results yet" : "No matching recommendations"}</h3>
+      <h3>{data.analysis_status === "pending" ? "No results yet" : filters.detection === "cleared" ? "No resolved recommendations" : "No matching recommendations"}</h3>
       <p>{data.analysis_status === "pending" ? operator ? "Run an analysis to get started." : "Results will appear after the next analysis." : "Try different filters."}</p>
     </div>}
     <div className="finding-list">{data?.items.map((finding) => <FindingCard key={finding.id} finding={finding}><RecommendationWorkflow finding={finding} onUpdated={updated} /></FindingCard>)}</div>

@@ -196,6 +196,18 @@ def save_evaluation(connection, organization_id, report):
                 "condition_cleared",
                 "The condition was no longer detected in the latest check.",
             )
+    # A resource removed from the inventory (deleted, or its connection replaced) is never
+    # re-checked, so its findings would otherwise stay current forever.
+    for row in connection.execute(
+        """UPDATE recommendation_findings AS f SET is_current = FALSE, version = version + 1
+        WHERE f.organization_id = %s AND f.is_current AND NOT f.detection_key = ANY(%s)
+          AND NOT EXISTS (
+            SELECT 1 FROM inventory_resources AS r
+            WHERE r.owner_id = f.organization_id AND r.id = (f.finding->>'resource_id')::bigint)
+        RETURNING *""",
+        (organization_id, list(seen)),
+    ).fetchall():
+        _event(connection, row, "condition_cleared", "The resource is no longer in the inventory.")
 
 
 def _where(query, organization_id, *, backlog=True):
@@ -230,6 +242,8 @@ def _where(query, organization_id, *, backlog=True):
         elif query.workflow_status != "all":
             clauses.append(sql.SQL("workflow_status = %(workflow_status)s"))
             values["workflow_status"] = query.workflow_status
+        if query.detection != "all":
+            clauses.append(sql.SQL("is_current" if query.detection == "current" else "NOT is_current"))
     return sql.SQL(" AND ").join(clauses), values
 
 
@@ -262,14 +276,15 @@ def open_summary(connection, organization_id, query):
     where, values = _where(query, organization_id, backlog=False)
     row = connection.execute(
         sql.SQL("""SELECT
-        count(DISTINCT finding->>'resource_id') AS affected_resources,
-        count(*) FILTER (WHERE finding->>'category' = 'cost') AS cost_opportunities,
-        count(*) FILTER (WHERE finding->>'kind' = 'alert') AS alerts,
-        count(*) FILTER (WHERE finding->>'kind' = 'recommendation') AS recommendations,
-        count(*) FILTER (WHERE finding->>'kind' = 'suggestion') AS suggestions,
-        count(*) FILTER (WHERE finding->>'severity' = 'critical') AS critical,
-        count(*) FILTER (WHERE finding->>'severity' = 'warning') AS warning,
-        count(*) FILTER (WHERE finding->>'severity' = 'info') AS info
+        count(DISTINCT finding->>'resource_id') FILTER (WHERE is_current) AS affected_resources,
+        count(*) FILTER (WHERE is_current AND finding->>'category' = 'cost') AS cost_opportunities,
+        count(*) FILTER (WHERE is_current AND finding->>'kind' = 'alert') AS alerts,
+        count(*) FILTER (WHERE is_current AND finding->>'kind' = 'recommendation') AS recommendations,
+        count(*) FILTER (WHERE is_current AND finding->>'kind' = 'suggestion') AS suggestions,
+        count(*) FILTER (WHERE is_current AND finding->>'severity' = 'critical') AS critical,
+        count(*) FILTER (WHERE is_current AND finding->>'severity' = 'warning') AS warning,
+        count(*) FILTER (WHERE is_current AND finding->>'severity' = 'info') AS info,
+        count(*) FILTER (WHERE NOT is_current) AS cleared
         FROM recommendation_findings WHERE {} AND workflow_status IN ('detected', 'approved')""").format(
             where
         ),
