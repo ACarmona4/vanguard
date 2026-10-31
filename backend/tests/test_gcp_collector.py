@@ -26,6 +26,7 @@ def _collector_with_sql_error(reason):
         "instances",
         "disks",
         "addresses",
+        "storage_buckets",
         "networks",
         "subnetworks",
         "firewalls",
@@ -89,6 +90,52 @@ class GCPCollectorTests(unittest.TestCase):
         self.assertEqual((spare.resource_type, spare.resource_id, spare.region), ("ip_address", "7120527120856735507", "us-central1"))
         self.assertEqual((spare.status, spare.attributes["address_type"], spare.attributes["users"]), ("RESERVED", "EXTERNAL", []))
         self.assertEqual((in_use.region, in_use.attributes["users"]), ("global", ["web"]))
+
+    def test_storage_buckets_keep_class_location_and_lifecycle(self):
+        page = {"items": [
+            {"name": "acme-logs", "location": "US", "locationType": "multi-region", "storageClass": "STANDARD",
+             "lifecycle": {"rule": [{"action": {"type": "Delete"}, "condition": {"age": 30}},
+                                    {"action": {"type": "SetStorageClass", "storageClass": "COLDLINE"}}]},
+             "softDeletePolicy": {"retentionDurationSeconds": "604800"}, "versioning": {"enabled": True},
+             "labels": {"team": "data"}, "timeCreated": "2026-01-01T00:00:00Z"},
+            {"name": "acme.web-assets", "location": "US-CENTRAL1", "locationType": "region",
+             "storageClass": "STANDARD", "autoclass": {"enabled": True}},
+        ]}
+        response = Mock(json=Mock(return_value=page))
+        session = Mock(get=Mock(return_value=response))
+        session.__enter__ = Mock(return_value=session)
+        session.__exit__ = Mock(return_value=False)
+        with patch("google.auth.transport.requests.AuthorizedSession", return_value=session):
+            logs, assets = GCPCollector("p", credentials=object()).storage_buckets()
+
+        self.assertEqual(session.get.call_args.kwargs["params"], {"project": "p"})
+        self.assertEqual((logs.resource_type, logs.resource_id, logs.region), ("storage_bucket", "acme-logs", "us"))
+        self.assertEqual((logs.attributes["location_type"], logs.attributes["storage_class"]), ("multi-region", "STANDARD"))
+        self.assertEqual(logs.attributes["lifecycle_rules"], 2)
+        self.assertEqual(logs.attributes["lifecycle_actions"], ["Delete", "SetStorageClass"])
+        self.assertEqual(logs.attributes["soft_delete_seconds"], 604800)
+        self.assertTrue(logs.attributes["versioning"])
+        self.assertFalse(logs.attributes["autoclass"])
+        self.assertEqual((assets.resource_id, assets.region), ("acme.web-assets", "us-central1"))
+        self.assertTrue(assets.attributes["autoclass"])
+        self.assertEqual(assets.attributes["lifecycle_rules"], 0)
+
+    def test_pubsub_topics_count_subscriptions_and_survive_a_denied_listing(self):
+        from datetime import timedelta
+
+        from google.cloud import pubsub_v1
+
+        topics = [pubsub_v1.types.Topic(name="projects/p/topics/orders", message_retention_duration=timedelta(days=1)),
+                  pubsub_v1.types.Topic(name="projects/p/topics/locked")]
+        client = Mock(list_topics=Mock(return_value=topics))
+        client.list_topic_subscriptions.side_effect = [["projects/p/subscriptions/a", "projects/p/subscriptions/b"],
+                                                       PermissionError("pubsub.topics.listSubscriptions")]
+        with patch.object(pubsub_v1, "PublisherClient", return_value=client):
+            orders, locked = GCPCollector("p", credentials=object()).pubsub_topics()
+
+        self.assertEqual((orders.attributes["subscriptions"], orders.attributes["retention_seconds"]), (2, 86400))
+        self.assertIsNone(locked.attributes["subscriptions"])
+        self.assertIsNone(locked.attributes["retention_seconds"])
 
 if __name__ == "__main__":
     unittest.main()

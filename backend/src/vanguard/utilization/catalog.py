@@ -37,10 +37,16 @@ AWS = {
     "dynamodb_table": ("AWS/DynamoDB", "TableName", (
         Metric("read_units_per_second", "Consumed reads", "units/s", "ConsumedReadCapacityUnits", "Sum", 1 / 300, activity=True),
         Metric("write_units_per_second", "Consumed writes", "units/s", "ConsumedWriteCapacityUnits", "Sum", 1 / 300, activity=True),
+        # Reported only for provisioned tables; on-demand tables have no reserved capacity.
+        Metric("provisioned_read_units", "Provisioned reads", "units/s", "ProvisionedReadCapacityUnits", optional=True),
+        Metric("provisioned_write_units", "Provisioned writes", "units/s", "ProvisionedWriteCapacityUnits", optional=True),
     )),
     "sqs_queue": ("AWS/SQS", "QueueName", (
         Metric("queued_messages", "Pending messages", "messages", "ApproximateNumberOfMessagesVisible", activity=True),
         Metric("oldest_message_seconds", "Oldest message age", "s", "ApproximateAgeOfOldestMessage", "Maximum", activity=True),
+        Metric("messages_sent_per_second", "Messages sent", "messages/s", "NumberOfMessagesSent", "Sum", 1 / 300, activity=True),
+        Metric("messages_received_per_second", "Messages received", "messages/s", "NumberOfMessagesReceived", "Sum", 1 / 300, activity=True),
+        Metric("empty_receives_per_second", "Empty receives", "requests/s", "NumberOfEmptyReceives", "Sum", 1 / 300, activity=True),
     )),
     "sns_topic": ("AWS/SNS", "TopicName", (
         Metric("published_per_second", "Published messages", "messages/s", "NumberOfMessagesPublished", "Sum", 1 / 300, activity=True),
@@ -65,10 +71,14 @@ GCP = {
     )),
     "pubsub_topic": ("pubsub_topic", "topic_id", (
         Metric("retained_bytes", "Retained messages", "B", "pubsub.googleapis.com/topic/retained_bytes"),
+        Metric("published_per_second", "Published messages", "requests/s",
+               "pubsub.googleapis.com/topic/send_message_operation_count", "rate", activity=True),
     )),
     "pubsub_subscription": ("pubsub_subscription", "subscription_id", (
         Metric("queued_messages", "Unacknowledged messages", "messages", "pubsub.googleapis.com/subscription/num_undelivered_messages"),
         Metric("oldest_message_seconds", "Oldest unacknowledged message age", "s", "pubsub.googleapis.com/subscription/oldest_unacked_message_age", "max"),
+        Metric("acked_per_second", "Acknowledged messages", "messages/s",
+               "pubsub.googleapis.com/subscription/ack_message_count", "rate", activity=True),
     )),
 }
 

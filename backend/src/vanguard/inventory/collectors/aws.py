@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -10,6 +11,21 @@ from ..models import CollectionResult, Resource
 
 def _tags(tags: list[dict[str, str]] | None) -> dict[str, str]:
     return {tag["Key"]: tag["Value"] for tag in tags or []}
+
+
+def _optional(read: Callable[[], Any], default: Any = None) -> Any:
+    """Detail calls may lack a permission; the resource is still inventoried without them."""
+    try:
+        return read()
+    except Exception:
+        return default
+
+
+def _number(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class AWSCollector:
@@ -54,6 +70,8 @@ class AWSCollector:
             ]
             for name, collector in regional:
                 self._collect_one(result, f"{region}.{name}", collector)
+        # S3 lists every bucket of the account once, whatever the selected regions.
+        self._collect_one(result, "s3.buckets", self.s3_buckets)
         return result
 
     @staticmethod
@@ -127,8 +145,17 @@ class AWSCollector:
         for page in client.get_paginator("list_topics").paginate():
             for item in page["Topics"]:
                 arn = item["TopicArn"]
+                details = _optional(lambda arn=arn: client.get_topic_attributes(TopicArn=arn)["Attributes"], {})
+                tags = _optional(lambda arn=arn: client.list_tags_for_resource(ResourceArn=arn)["Tags"], [])
                 resources.append(self._resource(
-                    "sns_topic", arn, region=region, name=arn.rsplit(":", 1)[-1], raw_data=item
+                    "sns_topic", arn, region=region, name=arn.rsplit(":", 1)[-1],
+                    attributes={
+                        "subscriptions": _number(details.get("SubscriptionsConfirmed")),
+                        "subscriptions_pending": _number(details.get("SubscriptionsPending")),
+                        "fifo": details.get("FifoTopic") == "true",
+                        "tags": _tags(tags),
+                    },
+                    raw_data={**item, "Attributes": details},
                 ))
         return resources
 
@@ -136,12 +163,52 @@ class AWSCollector:
         client = self._client("sqs", region_name=region)
         resources = []
         for page in client.get_paginator("list_queues").paginate():
-            resources.extend(self._resource(
-                "sqs_queue", url, region=region, name=url.rsplit("/", 1)[-1],
-                raw_data={"QueueUrl": url},
-            ) for url in page.get("QueueUrls", []))
+            for url in page.get("QueueUrls", []):
+                details = _optional(lambda url=url: client.get_queue_attributes(
+                    QueueUrl=url, AttributeNames=["All"])["Attributes"], {})
+                tags = _optional(lambda url=url: client.list_queue_tags(QueueUrl=url).get("Tags", {}), {})
+                redrive = details.get("RedrivePolicy")
+                resources.append(self._resource(
+                    "sqs_queue", url, region=region, name=url.rsplit("/", 1)[-1],
+                    attributes={
+                        "dead_letter_queue": (json.loads(redrive).get("deadLetterTargetArn") if redrive else None),
+                        "long_polling_seconds": _number(details.get("ReceiveMessageWaitTimeSeconds")),
+                        "retention_seconds": _number(details.get("MessageRetentionPeriod")),
+                        "visibility_timeout_seconds": _number(details.get("VisibilityTimeout")),
+                        "fifo": details.get("FifoQueue") == "true",
+                        "tags": tags,
+                    },
+                    raw_data={"QueueUrl": url, "Attributes": details},
+                ))
         return resources
 
+
+    def s3_buckets(self) -> list[Resource]:
+        client = self._client("s3")
+        resources = []
+        for bucket in client.list_buckets().get("Buckets", []):
+            name = bucket["Name"]
+            # An empty LocationConstraint means us-east-1.
+            region = _optional(lambda name=name: client.get_bucket_location(Bucket=name).get("LocationConstraint")) or "us-east-1"
+            lifecycle = _optional(lambda name=name: client.get_bucket_lifecycle_configuration(Bucket=name).get("Rules"), [])
+            versioning = _optional(lambda name=name: client.get_bucket_versioning(Bucket=name).get("Status"))
+            tags = _optional(lambda name=name: client.get_bucket_tagging(Bucket=name).get("TagSet"), [])
+            tiering = _optional(lambda name=name: client.list_bucket_intelligent_tiering_configurations(
+                Bucket=name).get("IntelligentTieringConfigurationList"), [])
+            resources.append(self._resource(
+                "s3_bucket", name, region=region, name=name,
+                attributes={
+                    "lifecycle_rules": len(lifecycle or []),
+                    "aborts_incomplete_uploads": any("AbortIncompleteMultipartUpload" in rule for rule in lifecycle or []),
+                    "versioning": versioning == "Enabled",
+                    "intelligent_tiering": bool(tiering),
+                    "created_at": bucket["CreationDate"].isoformat() if bucket.get("CreationDate") else None,
+                    "tags": _tags(tags),
+                },
+                raw_data={"Name": name, "Region": region, "LifecycleRules": lifecycle or [],
+                          "Versioning": versioning, "IntelligentTiering": tiering or []},
+            ))
+        return resources
 
     def dynamodb_tables(self, region: str) -> list[Resource]:
         client = self._client("dynamodb", region_name=region)
@@ -149,12 +216,19 @@ class AWSCollector:
         for page in client.get_paginator("list_tables").paginate():
             for table_name in page.get("TableNames", []):
                 table = client.describe_table(TableName=table_name)["Table"]
+                throughput = table.get("ProvisionedThroughput") or {}
+                tags = _optional(lambda arn=table["TableArn"]: client.list_tags_of_resource(ResourceArn=arn)["Tags"], [])
                 resources.append(self._resource(
                     "dynamodb_table", table["TableArn"], region=region,
                     name=table_name, status=table.get("TableStatus"),
                     attributes={
-                        "billing_mode": table.get("BillingModeSummary", {}).get("BillingMode"),
+                        # Tables created as provisioned may report no BillingModeSummary.
+                        "billing_mode": table.get("BillingModeSummary", {}).get("BillingMode") or "PROVISIONED",
                         "item_count": table.get("ItemCount"),
+                        "table_size_bytes": table.get("TableSizeBytes"),
+                        "provisioned_read": throughput.get("ReadCapacityUnits"),
+                        "provisioned_write": throughput.get("WriteCapacityUnits"),
+                        "tags": _tags(tags),
                     },
                     raw_data=table,
                 ))

@@ -251,6 +251,12 @@ class RecommendationEngineTests(unittest.TestCase):
                                    telemetry_available=False, history_available=False)
         self.assertIn("1:stopped_instance_storage", checked)
 
+    def test_on_demand_table_without_provisioned_capacity_metrics_is_not_missing_telemetry(self):
+        table = resource(provider="aws", resource_type="dynamodb_table", resource_id="arn:sessions", status="ACTIVE")
+        recent = [series(table, key, [3] * 4) for key in ("read_units_per_second", "write_units_per_second")]
+        findings, _ = evaluate([table], recent, [], now=NOW)
+        self.assertNotIn("missing_telemetry", rules(findings))
+
     def test_findings_have_stable_ids_and_priority(self):
         recent = [series(self.item, "cpu_percent", [95] * 4), series(self.item, "filesystem_percent", [85] * 4)]
         first, _ = evaluate([self.item], recent, [], now=NOW)

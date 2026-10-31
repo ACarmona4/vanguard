@@ -18,5 +18,7 @@ export const resourceNames = {
   project_iam_policy: "IAM Policy",
   persistent_disk: "Persistent Disk",
   ip_address: "IP Address",
+  s3_bucket: "S3 Bucket",
+  storage_bucket: "Cloud Storage Bucket",
 };
 export const typeName = (value) => resourceNames[value] || value;

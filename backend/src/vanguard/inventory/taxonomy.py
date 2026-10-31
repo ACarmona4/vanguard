@@ -3,7 +3,7 @@
 RESOURCE_GROUPS = {
     "instances": ("ec2_instance", "compute_instance"),
     "databases": ("dynamodb_table", "cloudsql_instance"),
-    "storage": ("ebs_volume", "persistent_disk"),
+    "storage": ("ebs_volume", "persistent_disk", "s3_bucket", "storage_bucket"),
     "network": ("vpc", "subnet", "security_group", "vpc_network", "subnetwork", "firewall_rule", "ip_address"),
     "messaging": ("sqs_queue", "sns_topic", "pubsub_topic", "pubsub_subscription"),
     "identity": ("service_account", "project_iam_policy"),

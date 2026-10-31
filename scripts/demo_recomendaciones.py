@@ -291,7 +291,7 @@ def scenarios():
 
     q = resource(44, "pagos-sin-datos", "aws", "sqs_queue", status=None)
     add(g, "metricas_faltantes_total", "Cola SQS sin ninguna lectura reciente (permisos o métricas caídas)", q,
-        build(q, skip_recent=("queued_messages", "oldest_message_seconds")), {"missing_telemetry"})
+        build(q, skip_recent=tuple(metric.key for metric in metrics_for(q))), {"missing_telemetry"})
 
     t = resource(45, "RedshiftSNS", "aws", "sns_topic", status=None)
     vm = resource(49, "web-misma-cuenta", "aws", "ec2_instance")

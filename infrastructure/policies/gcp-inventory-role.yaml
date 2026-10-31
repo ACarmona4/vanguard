@@ -15,8 +15,10 @@ includedPermissions:
   - iam.serviceAccounts.list
   - pubsub.subscriptions.list
   - pubsub.topics.list
+  - pubsub.topics.listSubscriptions
   - resourcemanager.projects.get
   - resourcemanager.projects.getIamPolicy
+  - storage.buckets.list
 
   - monitoring.timeSeries.list
   - bigquery.jobs.create

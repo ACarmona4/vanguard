@@ -10,7 +10,13 @@ from ..utilization.catalog import IDENTITY_LABELS, identity
 from ..utilization.service import MetricsUnavailable
 from .policy import DEFAULT_POLICY
 
-HISTORY_METRICS = ("cpu_percent", "filesystem_percent", "network_in_bytes_per_second", "network_out_bytes_per_second")
+HISTORY_METRICS = (
+    "cpu_percent", "filesystem_percent", "network_in_bytes_per_second", "network_out_bytes_per_second",
+    # Usage history for managed services: memory and connections (Cloud SQL), consumed capacity
+    # (DynamoDB), message traffic (SQS, SNS, Pub/Sub).
+    "memory_percent", "connections", "read_units_per_second", "write_units_per_second",
+    "messages_sent_per_second", "messages_received_per_second", "published_per_second", "acked_per_second",
+)
 
 
 def query_history(resources, *, now=None, policy=DEFAULT_POLICY):

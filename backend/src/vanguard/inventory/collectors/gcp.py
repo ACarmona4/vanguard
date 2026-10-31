@@ -40,6 +40,18 @@ def _last_path_part(value: str | None) -> str | None:
     return value.rsplit("/", 1)[-1] if value else None
 
 
+def _seconds(value: Any) -> int | None:
+    """Durations arrive as timedelta (client libraries) or "600s" (REST)."""
+    if value in (None, ""):
+        return None
+    if hasattr(value, "total_seconds"):
+        return int(value.total_seconds()) or None
+    try:
+        return int(float(str(value).rstrip("s")))
+    except ValueError:
+        return None
+
+
 class GCPCollector:
     def __init__(self, project_id: str, credentials=None):
         if credentials is None:
@@ -54,6 +66,7 @@ class GCPCollector:
             ("compute.disks", self.disks),
             ("compute.addresses", self.addresses),
             ("cloudsql.instances", self.sql_instances),
+            ("storage.buckets", self.storage_buckets),
             ("compute.networks", self.networks),
             ("compute.subnetworks", self.subnetworks),
             ("compute.firewalls", self.firewalls),
@@ -168,12 +181,56 @@ class GCPCollector:
                 response.raise_for_status()
                 body = response.json()
                 for instance in body.get("items", []):
+                    settings = instance.get("settings") or {}
                     resources.append(Resource(
                         provider="gcp", resource_type="cloudsql_instance",
                         resource_id=instance["name"], name=instance["name"],
                         scope_id=self.project_id, region=instance.get("region"),
-                        status=instance.get("state"), attributes={"database_version": instance.get("databaseVersion")},
+                        status=instance.get("state"),
+                        attributes={
+                            "database_version": instance.get("databaseVersion"),
+                            "tier": settings.get("tier"),
+                            "availability_type": settings.get("availabilityType"),
+                            "disk_size_gb": settings.get("dataDiskSizeGb"),
+                            "backups_enabled": (settings.get("backupConfiguration") or {}).get("enabled"),
+                            "labels": settings.get("userLabels") or {},
+                        },
                         raw_data=instance,
+                    ))
+                if not body.get("nextPageToken"):
+                    break
+                params["pageToken"] = body["nextPageToken"]
+        return resources
+
+    def storage_buckets(self) -> list[Resource]:
+        from google.auth.transport.requests import AuthorizedSession
+
+        resources = []
+        with AuthorizedSession(self.credentials) as session:
+            params = {"project": self.project_id}
+            while True:
+                response = session.get("https://storage.googleapis.com/storage/v1/b", params=params, timeout=20)
+                response.raise_for_status()
+                body = response.json()
+                for bucket in body.get("items", []):
+                    rules = (bucket.get("lifecycle") or {}).get("rule") or []
+                    resources.append(Resource(
+                        # The billing export names buckets by name, so the name is the identifier.
+                        provider="gcp", resource_type="storage_bucket", resource_id=bucket["name"],
+                        name=bucket["name"], scope_id=self.project_id,
+                        region=(bucket.get("location") or "").lower() or None,
+                        attributes={
+                            "location_type": bucket.get("locationType"),
+                            "storage_class": bucket.get("storageClass"),
+                            "autoclass": bool((bucket.get("autoclass") or {}).get("enabled")),
+                            "lifecycle_rules": len(rules),
+                            "lifecycle_actions": sorted({(rule.get("action") or {}).get("type") for rule in rules} - {None}),
+                            "soft_delete_seconds": _seconds((bucket.get("softDeletePolicy") or {}).get("retentionDurationSeconds")),
+                            "versioning": bool((bucket.get("versioning") or {}).get("enabled")),
+                            "created_at": bucket.get("timeCreated"),
+                            "labels": bucket.get("labels") or {},
+                        },
+                        raw_data=bucket,
                     ))
                 if not body.get("nextPageToken"):
                     break
@@ -221,12 +278,25 @@ class GCPCollector:
         from google.cloud import pubsub_v1
 
         parent = f"projects/{self.project_id}"
-        return [Resource(
-            provider="gcp", resource_type="pubsub_topic", resource_id=topic.name,
-            name=_last_path_part(topic.name), scope_id=self.project_id, raw_data=_message_to_dict(topic),
-        ) for topic in pubsub_v1.PublisherClient(
-            credentials=self.credentials
-        ).list_topics(request={"project": parent}, timeout=20, retry=None)]
+        client = pubsub_v1.PublisherClient(credentials=self.credentials)
+        resources = []
+        for topic in client.list_topics(request={"project": parent}, timeout=20, retry=None):
+            try:
+                subscriptions = len(list(client.list_topic_subscriptions(
+                    request={"topic": topic.name}, timeout=20, retry=None)))
+            except Exception:  # missing pubsub.topics.listSubscriptions keeps the topic
+                subscriptions = None
+            resources.append(Resource(
+                provider="gcp", resource_type="pubsub_topic", resource_id=topic.name,
+                name=_last_path_part(topic.name), scope_id=self.project_id,
+                attributes={
+                    "subscriptions": subscriptions,
+                    "retention_seconds": _seconds(topic.message_retention_duration),
+                    "labels": dict(topic.labels),
+                },
+                raw_data=_message_to_dict(topic),
+            ))
+        return resources
 
     def pubsub_subscriptions(self) -> list[Resource]:
         from google.cloud import pubsub_v1
@@ -236,7 +306,14 @@ class GCPCollector:
             provider="gcp", resource_type="pubsub_subscription", resource_id=subscription.name,
             name=_last_path_part(subscription.name), scope_id=self.project_id,
             status=str(subscription.state.name),
-            attributes={"topic": subscription.topic, "filter": subscription.filter},
+            attributes={
+                "topic": subscription.topic, "filter": subscription.filter,
+                "retention_seconds": _seconds(subscription.message_retention_duration),
+                "retain_acked_messages": subscription.retain_acked_messages,
+                "push": bool(subscription.push_config.push_endpoint),
+                "expiration_ttl_seconds": _seconds(subscription.expiration_policy.ttl),
+                "labels": dict(subscription.labels),
+            },
             raw_data=_message_to_dict(subscription),
         ) for subscription in pubsub_v1.SubscriberClient(
             credentials=self.credentials

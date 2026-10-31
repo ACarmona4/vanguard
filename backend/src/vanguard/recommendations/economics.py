@@ -17,6 +17,7 @@ _GCP_KINDS = {"instances": "compute_instance", "disk": "persistent_disk", "disks
               "addresses": "ip_address", "globalAddresses": "ip_address"}
 _GCP_NAME = re.compile(r"^//compute\.googleapis\.com/projects/[^/]+/(?:zones|regions|global)(?:/[^/]+)?/"
                        r"(?P<kind>[A-Za-z]+)/(?P<id>\d+)$")
+_GCS_NAME = re.compile(r"^//storage\.googleapis\.com/projects/[^/]+/buckets/(?P<name>[a-z0-9][a-z0-9._-]*)$")
 _AWS_PREFIXES = {"i-": "ec2_instance", "vol-": "ebs_volume"}
 
 
@@ -25,6 +26,9 @@ def billing_key(provider, billed_id):
     if not billed_id:
         return None
     if provider == "gcp":
+        bucket = _GCS_NAME.match(billed_id)
+        if bucket:
+            return "storage_bucket", bucket["name"]
         match = _GCP_NAME.match(billed_id)
         kind = _GCP_KINDS.get(match["kind"]) if match else None
         return (kind, match["id"]) if kind else None
