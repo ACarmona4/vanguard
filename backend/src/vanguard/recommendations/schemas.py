@@ -29,6 +29,8 @@ class RecommendationQuery(ResourceFilters):
     ] = "open"
     # Findings the latest analysis no longer detects stay reviewable, apart from current ones.
     detection: Literal["current", "cleared", "all"] = "current"
+    # Page sections: cost savings first, then alerts, other changes and monitoring.
+    section: Literal["savings", "alerts", "changes", "monitoring"] | None = None
     order_by: Literal["priority", "economic_impact", "business_relevance", "newest"] = (
         "priority"
     )
@@ -45,6 +47,28 @@ class Evidence(BaseModel):
     window: str
     observed_at: datetime | None = None
     explanation: str
+
+
+class Savings(BaseModel):
+    monthly_amount: float
+    formula: str
+    confidence: Literal["high", "medium", "low"]
+    assumptions: list[str]
+
+
+class CostAssessment(BaseModel):
+    status: Literal["attributed", "not_attributable"]
+    source: Literal["gcp_billing_export", "aws_cost_explorer"] | None = None
+    granularity: Literal["resource"] | None = None
+    currency: str | None = None
+    period_start: str | None = None
+    period_end: str | None = None
+    days_covered: int = 0
+    observed_amount: float | None = None
+    daily_average: float | None = None
+    monthly_cost: float | None = None
+    savings: Savings | None = None
+    reason: str | None = None
 
 
 class Finding(BaseModel):
@@ -65,6 +89,7 @@ class Finding(BaseModel):
     region: str | None
     resource_status: str | None = None
     evidence: Evidence
+    cost: CostAssessment | None = None
 
 
 class StoredFinding(Finding):

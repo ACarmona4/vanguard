@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import Filter from "../shared/components/Filter";
 import Notification from "../shared/components/Notification";
 import { date } from "../shared/utils/format";
@@ -12,6 +12,52 @@ import { apiRequest } from "../api/client";
 import { CATEGORY_LABELS, PRIORITY_LABELS, SEVERITY_LABELS, STATE_LABELS } from "./labels";
 
 const options = (values) => values.map((value) => ({ value }));
+const PREVIEW = 5;
+const PAGE = 20;
+// Cost savings come first: the FinOps view should not need scrolling past alerts.
+const SECTIONS = [
+  { id: "savings", title: "Cost savings", description: "Resources that cost money without being used, or that could be smaller.", open: true },
+  { id: "alerts", title: "Alerts", description: "Sustained problems happening now.", open: true },
+  { id: "changes", title: "Capacity and performance", description: "Changes to review before they become problems.", open: false },
+  { id: "monitoring", title: "Monitoring", description: "What Vanguard cannot see yet, and how to fix it.", open: false },
+];
+
+function initialOpen() {
+  const defaults = Object.fromEntries(SECTIONS.map((section) => [section.id, section.open]));
+  try { return { ...defaults, ...JSON.parse(window.localStorage.getItem("recommendation-sections") || "{}") }; }
+  catch { return defaults; }
+}
+
+function RecommendationSection({ section, filters, open, onToggle, onUpdated }) {
+  const [expanded, setExpanded] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const limit = !open ? 1 : expanded ? PAGE : PREVIEW;
+  const { data, loading } = useRecommendations({ ...filters, section: section.id, limit, offset: expanded ? offset : 0 });
+  useEffect(() => { setExpanded(false); setOffset(0); }, [filters]);
+  if (data && data.total === 0) return null;
+  const total = data?.total;
+  return <section className={`recommendation-section${open ? " open" : ""}`} aria-labelledby={`section-${section.id}`}>
+    <button type="button" className="recommendation-section-heading" aria-expanded={open} onClick={onToggle}>
+      {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+      <span id={`section-${section.id}`} className="recommendation-section-title">{section.title}</span>
+      <span className="recommendation-tab-count">{total ?? "…"}</span>
+      <span className="muted recommendation-section-description">{section.description}</span>
+    </button>
+    {open && <>
+      {loading && !data && <p role="status">Loading…</p>}
+      <div className="finding-list">{data?.items.map((finding) => <FindingCard key={finding.id} finding={finding}><RecommendationWorkflow finding={finding} onUpdated={onUpdated} /></FindingCard>)}</div>
+      {data && !expanded && total > PREVIEW && <button type="button" className="button recommendation-section-more" onClick={() => setExpanded(true)}>Show all ({total})</button>}
+      {data && expanded && <div className="table-footer">
+        <span>{offset + 1}–{Math.min(offset + PAGE, total)} of {total}</span>
+        <div className="pagination">
+          <button disabled={offset === 0 || loading} onClick={() => setOffset(offset - PAGE)}>Previous</button>
+          <button disabled={offset + PAGE >= total || loading} onClick={() => setOffset(offset + PAGE)}>Next</button>
+          <button onClick={() => { setExpanded(false); setOffset(0); }}>Show less</button>
+        </div>
+      </div>}
+    </>}
+  </section>;
+}
 
 export default function RecommendationsPage() {
   const { user } = useAuth();
@@ -20,13 +66,20 @@ export default function RecommendationsPage() {
   const [analyzing, setAnalyzing] = useState(false);
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
-  const [offset, setOffset] = useState(0);
-  const { data, loading, error, refresh } = useRecommendations({ ...filters, offset, limit: 20 });
-  useEffect(() => {
-    if (data && offset > 0 && offset >= data.total) setOffset(0);
-  }, [data, offset]);
-  function change(key, value) { setFilters((current) => ({ ...current, [key]: value || (["provider", "workflow_status"].includes(key) ? "all" : "") })); setOffset(0); }
-  function updated(message) { setNotice(message); refresh(); }
+  const [open, setOpen] = useState(initialOpen);
+  const [revision, setRevision] = useState(0);
+  // Page-level request: summary, notices and the overall total; sections load their own items.
+  const { data, loading, error, refresh } = useRecommendations({ ...filters, limit: 1 });
+  function change(key, value) { setFilters((current) => ({ ...current, [key]: value || (["provider", "workflow_status"].includes(key) ? "all" : "") })); }
+  function reload() { refresh(); setRevision((value) => value + 1); }
+  function updated(message) { setNotice(message); reload(); }
+  function toggle(id) {
+    setOpen((current) => {
+      const next = { ...current, [id]: !current[id] };
+      try { window.localStorage.setItem("recommendation-sections", JSON.stringify(next)); } catch { /* optional preference */ }
+      return next;
+    });
+  }
   async function analyze() {
     setAnalyzing(true); setActionError(""); setNotice("");
     try { await apiRequest("recommendations/sync", { method: "POST" }); updated("Analysis updated."); }
@@ -36,7 +89,7 @@ export default function RecommendationsPage() {
   return <main>
     <section className="page-heading">
       <div><h1>Recommendations</h1><p>Review usage alerts and opportunities to reduce costs.</p></div>
-      <div className="recommendation-workflow-actions"><button className="button" disabled={loading || analyzing} onClick={refresh}><RefreshCw size={14} className={loading ? "spin" : ""} /> Refresh list</button>
+      <div className="recommendation-workflow-actions"><button className="button" disabled={loading || analyzing} onClick={reload}><RefreshCw size={14} className={loading ? "spin" : ""} /> Refresh list</button>
         {operator && <button className="button primary" disabled={analyzing || loading} onClick={analyze}>{analyzing ? "Analyzing…" : "Analyze now"}</button>}</div>
     </section>
     <Notification message={error} type="error" />
@@ -61,16 +114,13 @@ export default function RecommendationsPage() {
       </select></label>
     </div>
     <p className="muted recommendation-context">{data ? data.analysis_status === "pending" ? "No results yet." : `${data.total} results · Last analysis ${date(data.generated_at)}` : "Loading saved recommendations…"}</p>
-    {loading && <p role="status">Loading recommendations…</p>}
-    {data && data.items.length === 0 && <div className="empty-state">
+    {loading && !data && <p role="status">Loading recommendations…</p>}
+    {data && data.total === 0 && <div className="empty-state">
       <h3>{data.analysis_status === "pending" ? "No results yet" : filters.detection === "cleared" ? "No resolved recommendations" : "No matching recommendations"}</h3>
       <p>{data.analysis_status === "pending" ? operator ? "Run an analysis to get started." : "Results will appear after the next analysis." : "Try different filters."}</p>
     </div>}
-    <div className="finding-list">{data?.items.map((finding) => <FindingCard key={finding.id} finding={finding}><RecommendationWorkflow finding={finding} onUpdated={updated} /></FindingCard>)}</div>
-    {data && data.total > 20 && <div className="table-footer">
-      <span>{offset + 1}–{Math.min(offset + 20, data.total)} of {data.total}</span>
-      <div className="pagination"><button disabled={offset === 0 || loading} onClick={() => setOffset(offset - 20)}>Previous</button><button disabled={offset + 20 >= data.total || loading} onClick={() => setOffset(offset + 20)}>Next</button></div>
-    </div>}
+    {data && data.total > 0 && SECTIONS.map((section) => <RecommendationSection key={`${section.id}-${revision}`} section={section} filters={filters}
+      open={open[section.id]} onToggle={() => toggle(section.id)} onUpdated={updated} />)}
     <details className="recommendation-methodology dashboard-panel">
       <summary>About recommendations</summary>
       <p>Alerts flag sustained high usage. Capacity reviews look for low usage over a full week.</p>

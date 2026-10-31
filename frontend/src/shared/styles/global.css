@@ -1806,3 +1806,14 @@ pre {
 .recommendation-tabs button { display: inline-flex; align-items: center; gap: 6px; margin-bottom: -1px; padding: 9px 14px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
 .recommendation-tabs button.active { border-bottom-color: #6366f1; color: inherit; font-weight: 600; }
 .recommendation-tab-count { min-width: 18px; padding: 1px 6px; border-radius: 9px; background: var(--surface-subtle); font-size: 10px; text-align: center; }
+
+.finding-cost { margin-top: 4px; }
+.finding-cost .finding-evidence { margin-top: 0; border-top: 0; }
+.finding-cost ul { padding-left: 20px; font-size: 12px; line-height: 1.8; }
+
+.recommendation-section { margin-top: 18px; padding-top: 4px; border-top: 1px solid var(--border); }
+.recommendation-section-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; padding: 12px 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.recommendation-section-title { font-size: 15px; font-weight: 600; }
+.recommendation-section-description { flex-basis: 100%; padding-left: 24px; font-size: 11px; }
+.recommendation-section .finding-list { margin-top: 6px; }
+.recommendation-section-more { margin-top: 14px; }

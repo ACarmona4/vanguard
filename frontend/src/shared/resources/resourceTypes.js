@@ -1,8 +1,8 @@
 export const resourceGroups = [
   { value: "instances", label: "Instances", types: ["ec2_instance", "compute_instance"] },
   { value: "databases", label: "Databases", types: ["dynamodb_table", "cloudsql_instance"] },
-  { value: "storage", label: "Storage", types: ["ebs_volume"] },
-  { value: "network", label: "Network", types: ["vpc", "subnet", "security_group", "vpc_network", "subnetwork", "firewall_rule"] },
+  { value: "storage", label: "Storage", types: ["ebs_volume", "persistent_disk"] },
+  { value: "network", label: "Network", types: ["vpc", "subnet", "security_group", "vpc_network", "subnetwork", "firewall_rule", "ip_address"] },
   { value: "messaging", label: "Messaging", types: ["sqs_queue", "sns_topic", "pubsub_topic", "pubsub_subscription"] },
   { value: "identity", label: "Identity", types: ["service_account", "project_iam_policy"] },
 ];

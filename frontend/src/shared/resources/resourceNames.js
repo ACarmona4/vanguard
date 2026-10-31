@@ -16,5 +16,7 @@ export const resourceNames = {
   pubsub_subscription: "Pub/Sub Subscription",
   service_account: "Service Account",
   project_iam_policy: "IAM Policy",
+  persistent_disk: "Persistent Disk",
+  ip_address: "IP Address",
 };
 export const typeName = (value) => resourceNames[value] || value;

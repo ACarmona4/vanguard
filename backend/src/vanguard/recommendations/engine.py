@@ -196,12 +196,12 @@ def _reporting_accounts(recent, now):
 
 
 def _visibility_suggestions(resource, definitions, fresh, cpu_history, history_available, policy,
-                            account_reporting=False):
+                            account_reporting=False, parked=False):
     findings = []
     # Without traffic CloudWatch sends nothing, so silence only means missing data
-    # when the whole account is silent too.
-    required = [definition for definition in definitions
-                if not definition.optional and not (definition.activity and account_reporting)]
+    # when the whole account is silent too. Volumes of a stopped instance report nothing at all.
+    required = [] if parked else [definition for definition in definitions
+                                  if not definition.optional and not (definition.activity and account_reporting)]
     missing = [definition.label for definition in required if definition.key not in fresh]
     covered = len(required) - len(missing)
     if missing:
@@ -225,6 +225,79 @@ def _visibility_suggestions(resource, definitions, fresh, cpu_history, history_a
     return findings
 
 
+def _recent_inventory(resource, now):
+    seen = resource.get("last_seen_at")
+    if isinstance(seen, str):
+        seen = datetime.fromisoformat(seen.replace("Z", "+00:00"))
+    return seen is not None and 0 <= now - seen.timestamp() <= 1800
+
+
+def _attached_volume_ids(resource):
+    mappings = (resource.get("raw_data") or {}).get("BlockDeviceMappings")
+    if not isinstance(mappings, list):
+        return None
+    return [item["Ebs"]["VolumeId"] for item in mappings if (item.get("Ebs") or {}).get("VolumeId")]
+
+
+def _inventory_checks(resource):
+    """Inventory-only rules whose inputs are present, so their absence can clear a finding."""
+    raw, attributes = resource.get("raw_data") or {}, resource.get("attributes") or {}
+    kind = resource["resource_type"]
+    if kind == "ebs_volume" and isinstance(raw.get("Attachments"), list):
+        return {"unattached_volume"}
+    if kind == "persistent_disk" and isinstance(attributes.get("users"), list):
+        return {"unattached_volume"}
+    if kind == "ip_address" and isinstance(attributes.get("users"), list):
+        return {"unused_address"}
+    if kind == "ec2_instance" and _attached_volume_ids(resource) is not None:
+        return {"stopped_instance_storage"}
+    return set()
+
+
+def _inventory_reviews(resources, now):
+    """Reviews from inventory alone: idle storage and addresses can still be billed."""
+    findings = []
+    volumes = {item["resource_id"]: item for item in resources if item["resource_type"] == "ebs_volume"}
+    for resource in resources:
+        if not _recent_inventory(resource, now):
+            continue
+        raw, attributes = resource.get("raw_data") or {}, resource.get("attributes") or {}
+        kind = resource["resource_type"]
+        if ((kind == "ebs_volume" and resource.get("status") == "available" and raw.get("Attachments") == [])
+                or (kind == "persistent_disk" and resource.get("status") == "READY" and attributes.get("users") == [])):
+            size = raw.get("Size") if kind == "ebs_volume" else attributes.get("size_gb")
+            # A detached disk can still contain valuable backups; this is a review.
+            findings.append(_finding(resource, "unattached_volume", "recommendation", "info", "cost",
+                                     "Unattached volume", "This volume is not attached to an instance and may still incur storage charges.",
+                                     ["Check whether the volume is still needed.", "Confirm ownership and backups before taking a snapshot or deleting it."],
+                                     metric="attachments", value=0, unit="attachments", window="inventory",
+                                     explanation="No attached instances in the latest inventory."
+                                                 + (f" Provisioned size: {size} GB." if size else "")))
+        elif (kind == "ip_address" and attributes.get("address_type") == "EXTERNAL"
+                and resource.get("status") == "RESERVED" and attributes.get("users") == []):
+            findings.append(_finding(resource, "unused_address", "recommendation", "info", "cost",
+                                     "Unused external IP address", "This reserved external IP address is not used by any resource and may still be billed.",
+                                     ["Check DNS records, firewall allowlists and failover plans that use this address.",
+                                      "Release the address only after confirming it is no longer needed."],
+                                     metric="address_users", value=0, unit="resources", window="inventory",
+                                     explanation=f"Address {attributes.get('address') or 'unknown'} is reserved and has no users in the latest inventory."))
+        elif kind == "ec2_instance" and (resource.get("status") or "").lower() == "stopped":
+            attached = [volumes[volume_id] for volume_id in _attached_volume_ids(resource) or [] if volume_id in volumes]
+            if not attached:
+                continue
+            size = sum(int((volume.get("raw_data") or {}).get("Size") or 0) for volume in attached)
+            reason = raw.get("StateTransitionReason")
+            findings.append(_finding(resource, "stopped_instance_storage", "recommendation", "info", "cost",
+                                     "Stopped instance with billed storage",
+                                     f"This stopped instance keeps {len(attached)} EBS volume(s) ({size} GB) that are still billed.",
+                                     ["Confirm the owner and whether the instance will be started again.",
+                                      "Take a snapshot before terminating the instance or deleting its volumes."],
+                                     metric="attached_storage", value=size, unit="GB", window="inventory",
+                                     explanation="Attached volumes: " + ", ".join(volume["resource_id"] for volume in attached) + "."
+                                                 + (f" {reason}." if reason else "")))
+    return findings
+
+
 def confirmed_checks(resources, recent_series, history_series, *, now, telemetry_available,
                      history_available, policy=DEFAULT_POLICY):
     """Rules whose absence is meaningful; outages and sparse samples cannot clear them."""
@@ -232,13 +305,8 @@ def confirmed_checks(resources, recent_series, history_series, *, now, telemetry
     checked = set()
     for resource in resources:
         prefix = f"{resource['id']}:"
-        seen = resource.get("last_seen_at")
-        if isinstance(seen, str):
-            seen = datetime.fromisoformat(seen.replace("Z", "+00:00"))
-        if (resource["resource_type"] == "ebs_volume" and seen
-                and 0 <= now - seen.timestamp() <= 1800
-                and isinstance((resource.get("raw_data") or {}).get("Attachments"), list)):
-            checked.add(prefix + "unattached_volume")
+        if _recent_inventory(resource, now):
+            checked.update(prefix + rule for rule in _inventory_checks(resource))
         if not telemetry_available or (resource.get("status") or "").lower() in INACTIVE:
             continue
         definitions = metrics_for(resource)
@@ -275,6 +343,8 @@ def evaluate(resources, recent_series, history_series, *, now=None, telemetry_av
     recent, history = indexed_series(recent_series), indexed_series(history_series)
     findings, eligible, monitored, ready = [], 0, 0, 0
     reporting = _reporting_accounts(recent, now)
+    parked = {volume_id for item in resources if item["resource_type"] == "ec2_instance"
+              and (item.get("status") or "").lower() in INACTIVE for volume_id in _attached_volume_ids(item) or []}
     for resource in resources:
         if (resource.get("status") or "").lower() in INACTIVE:
             continue
@@ -293,7 +363,8 @@ def evaluate(resources, recent_series, history_series, *, now=None, telemetry_av
         if not telemetry_available:
             continue
         findings.extend(_visibility_suggestions(resource, definitions, fresh, cpu_history, history_available, policy,
-                                                identity(resource)[:3] in reporting))
+                                                identity(resource)[:3] in reporting,
+                                                resource["resource_type"] == "ebs_volume" and resource["resource_id"] in parked))
         for metric in PRESSURE:
             sustained = _sustained(readings.get(metric, []), now, policy)
             if sustained:
@@ -309,19 +380,7 @@ def evaluate(resources, recent_series, history_series, *, now=None, telemetry_av
         if history_available:
             findings.extend(_cost_reviews(resource, fresh, historical, policy))
             findings.extend(_network_changes(resource, readings, historical, now, policy))
-    # A detached EBS volume can still contain valuable backups; this is a review.
-    for resource in resources:
-        seen = resource.get("last_seen_at")
-        if isinstance(seen, str):
-            seen = datetime.fromisoformat(seen.replace("Z", "+00:00"))
-        if (resource["resource_type"] == "ebs_volume" and resource.get("status") == "available"
-                and (resource.get("raw_data") or {}).get("Attachments") == []
-                and seen is not None and 0 <= now - seen.timestamp() <= 1800):
-            findings.append(_finding(resource, "unattached_volume", "recommendation", "info", "cost",
-                                     "Unattached volume", "This volume is not attached to an instance and may still incur storage charges.",
-                                     ["Check whether the volume is still needed.", "Confirm ownership and backups before taking a snapshot or deleting it."],
-                                     metric="attachments", value=0, unit="attachments", window="inventory",
-                                     explanation="No attached instances in the latest inventory."))
+    findings.extend(_inventory_reviews(resources, now))
     findings.sort(key=lambda item: ({"alert": 0, "recommendation": 1, "suggestion": 2}[item["kind"]],
                                     {"critical": 0, "warning": 1, "info": 2}[item["severity"]], item["resource_id"], item["rule"]))
     summary = {"resources": len(resources), "eligible": eligible, "monitored": monitored,

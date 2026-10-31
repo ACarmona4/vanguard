@@ -51,6 +51,8 @@ class GCPCollector:
         result = CollectionResult()
         collectors: list[tuple[str, Callable[[], list[Resource]]]] = [
             ("compute.instances", self.instances),
+            ("compute.disks", self.disks),
+            ("compute.addresses", self.addresses),
             ("cloudsql.instances", self.sql_instances),
             ("compute.networks", self.networks),
             ("compute.subnetworks", self.subnetworks),
@@ -96,6 +98,60 @@ class GCPCollector:
                     raw_data=_message_to_dict(instance),
                 ))
         return resources
+
+    def disks(self) -> list[Resource]:
+        from google.cloud import compute_v1
+
+        resources: list[Resource] = []
+        for scope, response in compute_v1.DisksClient(credentials=self.credentials).aggregated_list(
+            project=self.project_id, timeout=20, retry=None
+        ):
+            for disk in response.disks or []:
+                zone = _last_path_part(disk.zone) or _last_path_part(scope)
+                resources.append(Resource(
+                    provider="gcp", resource_type="persistent_disk", resource_id=str(disk.id),
+                    name=disk.name, scope_id=self.project_id, zone=zone,
+                    region=_last_path_part(disk.region) or (zone.rsplit("-", 1)[0] if zone else None),
+                    status=disk.status,
+                    attributes={
+                        "size_gb": disk.size_gb,
+                        "disk_type": _last_path_part(disk.type_),
+                        "users": [_last_path_part(user) for user in disk.users],
+                        "created_at": disk.creation_timestamp or None,
+                        "last_detached_at": disk.last_detach_timestamp or None,
+                        "labels": dict(disk.labels),
+                    },
+                    raw_data=_message_to_dict(disk),
+                ))
+        return resources
+
+    def addresses(self) -> list[Resource]:
+        from google.cloud import compute_v1
+
+        resources: list[Resource] = []
+        for scope, response in compute_v1.AddressesClient(credentials=self.credentials).aggregated_list(
+            project=self.project_id, timeout=20, retry=None
+        ):
+            for address in response.addresses or []:
+                resources.append(self._address(address, _last_path_part(address.region) or _last_path_part(scope)))
+        for address in compute_v1.GlobalAddressesClient(credentials=self.credentials).list(
+            project=self.project_id, timeout=20, retry=None
+        ):
+            resources.append(self._address(address, "global"))
+        return resources
+
+    def _address(self, address, region) -> Resource:
+        return Resource(
+            provider="gcp", resource_type="ip_address", resource_id=str(address.id),
+            name=address.name, scope_id=self.project_id, region=region, status=address.status,
+            attributes={
+                "address": address.address,
+                "address_type": address.address_type,
+                "users": [_last_path_part(user) for user in address.users],
+                "created_at": address.creation_timestamp or None,
+            },
+            raw_data=_message_to_dict(address),
+        )
 
     def sql_instances(self) -> list[Resource]:
         from urllib.parse import quote

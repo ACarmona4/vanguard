@@ -6,6 +6,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from ..inventory.taxonomy import resource_types_for
+from .economics import suggested_impact
 from .priority import assess
 from .schemas import StoredFinding
 
@@ -131,29 +132,42 @@ def save_evaluation(connection, organization_id, report):
             (organization_id,),
         ).fetchall()
     }
+    # A person's priority decision always wins over the impact suggested from billing.
+    assessed_by_people = {
+        row["finding_id"]
+        for row in connection.execute(
+            "SELECT DISTINCT finding_id FROM recommendation_events "
+            "WHERE organization_id = %s AND event_type = 'prioritized'",
+            (organization_id,),
+        ).fetchall()
+    }
     seen = set()
     for finding in report["items"]:
         key = finding["id"]
         seen.add(key)
         current = existing.get(key)
-        ranking = (
-            assess(finding, current["business_relevance"], current["economic_impact"])
-            if current
-            else assess(finding)
-        )
+        suggested = suggested_impact(finding.get("cost")) or "unknown"
+        if current and current["id"] in assessed_by_people:
+            impact = current["economic_impact"]
+        else:
+            impact = suggested
+        ranking = assess(finding, current["business_relevance"] if current else "medium", impact)
         if current:
             connection.execute(
                 """UPDATE recommendation_findings SET finding = %s, last_detected_at = %s,
-                priority = %s, priority_score = %s, priority_reason = %s,
-                version = version + CASE WHEN finding IS DISTINCT FROM %s THEN 1 ELSE 0 END
+                economic_impact = %s, priority = %s, priority_score = %s, priority_reason = %s,
+                version = version + CASE WHEN finding IS DISTINCT FROM %s
+                    OR economic_impact IS DISTINCT FROM %s THEN 1 ELSE 0 END
                 WHERE organization_id = %s AND id = %s""",
                 (
                     Jsonb(finding),
                     report["generated_at"],
+                    impact,
                     ranking["priority"],
                     ranking["priority_score"],
                     ranking["priority_reason"],
                     Jsonb(finding),
+                    impact,
                     organization_id,
                     current["id"],
                 ),
@@ -162,7 +176,8 @@ def save_evaluation(connection, organization_id, report):
             row = connection.execute(
                 """INSERT INTO recommendation_findings
                 (id, organization_id, detection_key, finding, first_detected_at, last_detected_at,
-                 priority, priority_score, priority_reason) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 economic_impact, priority, priority_score, priority_reason)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *""",
                 (
                     uuid4(),
@@ -171,6 +186,7 @@ def save_evaluation(connection, organization_id, report):
                     Jsonb(finding),
                     report["generated_at"],
                     report["generated_at"],
+                    impact,
                     ranking["priority"],
                     ranking["priority_score"],
                     ranking["priority_reason"],
@@ -242,9 +258,19 @@ def _where(query, organization_id, *, backlog=True):
         elif query.workflow_status != "all":
             clauses.append(sql.SQL("workflow_status = %(workflow_status)s"))
             values["workflow_status"] = query.workflow_status
+        if query.section:
+            clauses.append(sql.SQL(SECTIONS[query.section]))
         if query.detection != "all":
             clauses.append(sql.SQL("is_current" if query.detection == "current" else "NOT is_current"))
     return sql.SQL(" AND ").join(clauses), values
+
+
+SECTIONS = {
+    "savings": "finding->>'category' = 'cost'",
+    "alerts": "finding->>'kind' = 'alert'",
+    "changes": "finding->>'kind' = 'recommendation' AND finding->>'category' <> 'cost'",
+    "monitoring": "finding->>'kind' = 'suggestion'",
+}
 
 
 ORDER_BY = {

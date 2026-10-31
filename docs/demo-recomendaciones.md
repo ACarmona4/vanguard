@@ -5,7 +5,7 @@ Resultados de `scripts/demo_recomendaciones.py`: el motor real de Vanguard (`van
 - Cada recurso recibe **todas** las métricas del catálogo de Vanguard: lecturas cada 5 min de los últimos 30 min y **7 días de historial** por hora, con ±5 % de ruido. Los escenarios de *Datos incompletos* quitan datos a propósito.
 - Cada escenario declara qué reglas espera; ✔ significa que el motor devolvió exactamente esas.
 
-**Resultado: 36/36 escenarios se comportaron como se esperaba.**
+**Resultado: 40/40 escenarios se comportaron como se esperaba.**
 
 ## Umbrales del motor
 
@@ -22,6 +22,9 @@ Definidos en `backend/src/vanguard/recommendations/policy.py`:
 | Cola (SQS / Pub/Sub) | mensaje más viejo: warning ≥ 300 s, critical ≥ 900 s |
 | Entregas fallidas (SNS) | cualquier valor > 0 sostenido |
 | Crecimiento de red | > máx(1 MiB/s, 3 × p95 semanal) sostenido 15 min |
+| Disco sin adjuntar (EBS / Persistent Disk) | `available` sin `Attachments` (AWS) o `READY` sin `users` (GCP), con inventario reciente |
+| IP externa sin uso (GCP) | `EXTERNAL`, `RESERVED` y sin `users` |
+| EC2 detenida con almacenamiento | `stopped` con volúmenes EBS adjuntos en el inventario |
 | Métricas faltantes | alguna métrica **obligatoria** del catálogo sin lecturas en los últimos 20 min (el disco local de EC2 es opcional; SNS, SQS y DynamoDB solo se exigen si toda la cuenta está en silencio) |
 
 ## Cómo ejecutarlo
@@ -683,6 +686,79 @@ Que no haya hallazgos **no significa que el recurso esté sano**. En la app, el 
 La EC2 tiene estado `stopped`. El motor ignora los recursos en estados inactivos (`stopped`, `terminated`, `suspended`, `deleting`, etc.) aunque tengan métricas, porque recomendar reducir el tamaño o alertar por CPU en una máquina apagada no tiene sentido.
 
 En tu caso real, cuando la sesión de AWS Academy se cierra y la EC2 se detiene, sus recomendaciones dejan de evaluarse hasta que vuelva a estar `running`.
+
+## Inventario: discos, IP y EC2 detenidas
+
+### ✔ [aws_ec2_detenida_con_ebs] EC2 detenida desde hace semanas con un EBS de 100 GB adjunto (sigue cobrando)
+
+```text
+   Recurso: batch-detenida · AWS · ec2_instance · 0/5 métricas recientes · 0 h de historial
+   → [recommendation · INFO · cost] Stopped instance with billed storage  (stopped_instance_storage)
+      This stopped instance keeps 1 EBS volume(s) (100 GB) that are still billed.
+      Evidencia: valor=100 GB · umbral=None · ventana=inventory · lecturas=0
+      Por qué: Attached volumes: ebs_volume-17. User initiated (2026-09-30 18:02:11 GMT).
+      · Confirm the owner and whether the instance will be started again.
+      · Take a snapshot before terminating the instance or deleting its volumes.
+```
+
+**Qué sucedió:**
+
+La instancia está `stopped`. AWS no cobra el cómputo de una EC2 detenida, pero **sí sigue cobrando sus volúmenes EBS**, que permanecen adjuntos. La regla `stopped_instance_storage` usa solo el inventario:
+
+1. Estado `stopped` e inventario reciente (visto en los últimos 30 min).
+2. Toma los volúmenes de `BlockDeviceMappings` que existen en el inventario y suma su `Size` (aquí 100 GB).
+3. Si AWS lo informa, añade el motivo y la fecha de detención (`StateTransitionReason`).
+
+No se duplica con `unattached_volume`, porque el volumen sigue adjunto. Además, sus volúmenes ya no generan "Missing metrics": AWS no publica métricas de EBS mientras la instancia está detenida.
+
+En la app, si el costo por recurso está disponible, se muestra el **ahorro estimado** como la suma del costo diario de los volúmenes × 30. En AWS Academy ese dato no existe, así que el costo aparece como **no atribuible**, con el motivo.
+
+### ✔ [gcp_disco_sin_adjuntar] Persistent Disk de 200 GB sin ninguna VM que lo use
+
+```text
+   Recurso: old-data-disk · GCP · persistent_disk · 0/0 métricas recientes · 0 h de historial
+   → [recommendation · INFO · cost] Unattached volume  (unattached_volume)
+      This volume is not attached to an instance and may still incur storage charges.
+      Evidencia: valor=0 attachments · umbral=None · ventana=inventory · lecturas=0
+      Por qué: No attached instances in the latest inventory. Provisioned size: 200 GB.
+      · Check whether the volume is still needed.
+      · Confirm ownership and backups before taking a snapshot or deleting it.
+```
+
+**Qué sucedió:**
+
+Es la misma regla que `aws_ebs_suelto` (`unattached_volume`), ahora para GCP. Se activa con un disco en estado `READY` y una lista `users` **vacía**, es decir, ninguna VM lo usa. Si `users` falta (dato incompleto), no se concluye nada. Se añade el tamaño aprovisionado a la explicación.
+
+La facturación de GCP sí trae el costo por disco (`.../zones/<zona>/disk/<id>`). Por eso, en la app, este hallazgo muestra el **costo observado** y el **ahorro estimado** con su fórmula y nivel de confianza.
+
+### ✔ [gcp_ip_sin_uso] IP externa reservada que ningún recurso usa
+
+```text
+   Recurso: spare-ip · GCP · ip_address · 0/0 métricas recientes · 0 h de historial
+   → [recommendation · INFO · cost] Unused external IP address  (unused_address)
+      This reserved external IP address is not used by any resource and may still be billed.
+      Evidencia: valor=0 resources · umbral=None · ventana=inventory · lecturas=0
+      Por qué: Address 34.1.2.3 is reserved and has no users in the latest inventory.
+      · Check DNS records, firewall allowlists and failover plans that use this address.
+      · Release the address only after confirming it is no longer needed.
+```
+
+**Qué sucedió:**
+
+Regla `unused_address`: dirección `EXTERNAL`, estado `RESERVED` y sin `users`. GCP cobra las IP externas reservadas que no se usan. Las acciones piden revisar primero DNS, allowlists y planes de failover antes de liberarla, porque una IP liberada no se recupera.
+
+La facturación de GCP trae el costo por dirección (`.../regions/<región>/addresses/<id>`), así que también puede mostrar el ahorro estimado.
+
+### ✔ [gcp_ip_en_uso] IP externa usada por un balanceador → NO se recomienda liberar
+
+```text
+   Recurso: lb-ip · GCP · ip_address · 0/0 métricas recientes · 0 h de historial
+   → Sin hallazgos (el recurso se ve sano o no se evalúa).
+```
+
+**Qué sucedió:**
+
+La IP está `IN_USE` y tiene un usuario (una forwarding rule de un balanceador). No es un desperdicio, así que no hay hallazgo. Este escenario asegura que la regla no recomiende liberar una IP en uso.
 
 ## Observaciones generales
 

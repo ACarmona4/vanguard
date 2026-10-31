@@ -17,8 +17,11 @@ Uso, desde la raíz del repo:
 
 import argparse
 import random
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 
+from vanguard.recommendations.economics import assess as assess_costs
+from vanguard.recommendations.economics import suggested_impact
 from vanguard.recommendations.engine import evaluate
 from vanguard.utilization.catalog import IDENTITY_LABELS, metrics_for
 
@@ -40,7 +43,7 @@ HEALTHY = {
 
 def resource(rid, name, provider, rtype, status="running", **extra):
     attributes = {"database_version": "POSTGRES_15"} if rtype == "cloudsql_instance" else {}
-    return {"id": rid, "owner_id": "demo", "provider": provider, "scope_id": f"demo-{provider}",
+    return {"id": rid, "owner_id": "demo", "connection_id": f"demo-{provider}", "provider": provider, "scope_id": f"demo-{provider}",
             "region": "us-east-1" if provider == "aws" else "us-central1",
             "resource_type": rtype, "resource_id": f"{rtype}-{rid}", "name": name, "status": status,
             "attributes": attributes, "raw_data": {}, "last_seen_at": datetime.fromtimestamp(NOW, timezone.utc),
@@ -84,6 +87,39 @@ def build(item, recent=None, history=None, *, skip_recent=(), history_hours=WEEK
     return recent_series, history_series
 
 
+TODAY = date.fromtimestamp(NOW)
+GCP_BILLED = {"compute_instance": "zones/us-central1-a/instances", "persistent_disk": "zones/us-central1-a/disk",
+              "ip_address": "regions/us-central1/addresses"}
+# Billing sources of the demo connections. `demo-aws-academy` has no resource-level data, like AWS Academy.
+COST_SOURCES = [{"connection_id": "demo-gcp", "provider": "gcp", "status": "success", "detail_available": True},
+                {"connection_id": "demo-aws", "provider": "aws", "status": "success", "detail_available": True},
+                {"connection_id": "demo-aws-academy", "provider": "aws", "status": "success", "detail_available": False}]
+
+
+def billing(item, days, daily, currency="USD"):
+    """Invented resource-level billing lines, in the format each provider exports."""
+    billed = (f"//compute.googleapis.com/projects/123456789/{GCP_BILLED[item['resource_type']]}/{item['resource_id']}"
+              if item["provider"] == "gcp" else item["resource_id"])
+    return [{"owner": "demo", "connection_id": item["connection_id"], "provider": item["provider"], "resource_id": billed,
+             "usage_date": TODAY - timedelta(days=day), "currency": currency, "amount": Decimal(str(daily))}
+            for day in range(days)]
+
+
+class _BillingTable:
+    """Stands in for PostgreSQL: returns the invented lines to the real economic assessment."""
+
+    def __init__(self, lines):
+        self.lines = lines
+
+    def execute(self, query, params):
+        if "FROM cost_records" in query:
+            _, start, end = params
+            rows = [line for line in self.lines if start <= line["usage_date"] < end]
+        else:
+            rows = COST_SOURCES
+        return type("Rows", (), {"fetchall": lambda _: rows})()
+
+
 def scenarios():
     s = []
 
@@ -98,9 +134,10 @@ def scenarios():
     add(g, "aws_ec2_sana", "EC2 normal: CPU ~35 %, red y disco moderados, semana completa", vm,
         build(vm), {"capacity_visibility"})
 
-    vm = resource(2, "web-ociosa", "aws", "ec2_instance")
+    vm = resource(2, "web-ociosa", "aws", "ec2_instance", resource_id="i-0demo000002")
     add(g, "aws_ec2_ociosa", "EC2 con CPU ~6 % toda la semana → candidata a instancia más pequeña", vm,
-        build(vm, {"cpu_percent": 6}), {"cpu_percent_oversized", "capacity_visibility"})
+        build(vm, {"cpu_percent": 6}), {"cpu_percent_oversized", "capacity_visibility"},
+        billing=billing(vm, 20, 0.35), expected_cost=("attributed", None))
 
     vm = resource(3, "batch-con-pico", "aws", "ec2_instance")
     hist = wobble(6, WEEK, random.Random(3))
@@ -128,8 +165,10 @@ def scenarios():
     vol = resource(8, "vol-datos", "aws", "ebs_volume", status="in-use", raw_data={"Attachments": [{"InstanceId": "i-1"}]})
     add(g, "aws_ebs_sano", "Volumen EBS adjunto y con I/O normal", vol, build(vol), set())
 
-    vol = resource(9, "vol-huerfano", "aws", "ebs_volume", status="available", raw_data={"Attachments": []})
-    add(g, "aws_ebs_suelto", "Volumen EBS sin adjuntar (sigue cobrando)", vol, build(vol), {"unattached_volume"})
+    vol = resource(9, "vol-huerfano", "aws", "ebs_volume", status="available", raw_data={"Attachments": [], "Size": 50},
+                   resource_id="vol-0demo000009", connection_id="demo-aws-academy")
+    add(g, "aws_ebs_suelto", "Volumen EBS sin adjuntar en una cuenta sin costo por recurso (como AWS Academy)", vol,
+        build(vol), {"unattached_volume"}, billing=[], expected_cost=("not_attributable", None))
 
     t = resource(10, "sessions", "aws", "dynamodb_table", status="ACTIVE")
     add(g, "aws_dynamodb_sana", "Tabla DynamoDB con lecturas/escrituras normales", t, build(t), set())
@@ -152,14 +191,25 @@ def scenarios():
     add(g, "aws_sns_fallando", "Tema SNS con 0,3 entregas fallidas por segundo", t,
         build(t, {"failed_per_second": 0.3}), {"failed_per_second_high"})
 
+    vm = resource(16, "batch-detenida", "aws", "ec2_instance", status="stopped",
+                  resource_id="i-0demo000016",
+                  raw_data={"BlockDeviceMappings": [{"Ebs": {"VolumeId": "vol-0demo000017"}}],
+                            "StateTransitionReason": "User initiated (2026-09-30 18:02:11 GMT)"})
+    vol = resource(17, "batch-root", "aws", "ebs_volume", status="in-use",
+                   resource_id="vol-0demo000017", raw_data={"Size": 100, "Attachments": [{"InstanceId": "i-0demo000016"}]})
+    add(g, "aws_ec2_detenida_con_ebs", "EC2 detenida desde hace semanas con un EBS de 100 GB adjunto (sigue cobrando)", vm,
+        ([], []), {"stopped_instance_storage"}, others=[vol],
+        billing=billing(vol, 20, 0.27), expected_cost=("attributed", "high"))
+
     # ───────────────────────── GCP ─────────────────────────
     g = "GCP"
     vm = resource(20, "api-gce-sana", "gcp", "compute_instance")
     add(g, "gcp_vm_sana", "VM de Compute Engine normal, semana completa", vm, build(vm), {"capacity_visibility"})
 
-    vm = resource(21, "api-gce-ociosa", "gcp", "compute_instance")
+    vm = resource(21, "api-gce-ociosa", "gcp", "compute_instance", resource_id="2000000000000000021")
     add(g, "gcp_vm_ociosa", "VM con CPU ~5 % toda la semana → candidata a máquina más pequeña", vm,
-        build(vm, {"cpu_percent": 5}), {"cpu_percent_oversized", "capacity_visibility"})
+        build(vm, {"cpu_percent": 5}), {"cpu_percent_oversized", "capacity_visibility"},
+        billing=billing(vm, 10, 1.2), expected_cost=("attributed", None))
 
     sql = {"status": "RUNNABLE", "raw_data": {"settings": {"dataDiskSizeGb": "100"}}}
     db = resource(22, "orders-db", "gcp", "cloudsql_instance", **sql)
@@ -175,7 +225,8 @@ def scenarios():
 
     db = resource(25, "reports-db", "gcp", "cloudsql_instance", **sql)
     add(g, "gcp_sql_disco_sobrado", "Cloud SQL de 100 GB usando ~5 GB toda la semana → reducir disco", db,
-        build(db, {"filesystem_percent": 5}), {"filesystem_percent_oversized"})
+        build(db, {"filesystem_percent": 5}), {"filesystem_percent_oversized"},
+        billing=[], expected_cost=("not_attributable", None))
 
     db = resource(26, "events-db", "gcp", "cloudsql_instance", **sql)
     growth = [45] * (WEEK - 24) + [60 + i for i in range(24)]  # crece 1 %/h las últimas 24 h
@@ -197,6 +248,20 @@ def scenarios():
     sub = resource(30, "eventos-batch", "gcp", "pubsub_subscription", status=None)
     add(g, "gcp_pubsub_atascada", "Suscripción con mensajes sin confirmar hace ~20 min → crítica", sub,
         build(sub, {"oldest_message_seconds": 1200, "queued_messages": 15000}), {"oldest_message_seconds_high"})
+
+    disk = resource(31, "old-data-disk", "gcp", "persistent_disk", status="READY", resource_id="3000000000000000031",
+                    attributes={"users": [], "size_gb": 200, "disk_type": "pd-standard"})
+    add(g, "gcp_disco_sin_adjuntar", "Persistent Disk de 200 GB sin ninguna VM que lo use", disk,
+        ([], []), {"unattached_volume"}, billing=billing(disk, 14, 0.32), expected_cost=("attributed", "high"))
+
+    ip = resource(32, "spare-ip", "gcp", "ip_address", status="RESERVED", resource_id="3000000000000000032",
+                  attributes={"users": [], "address_type": "EXTERNAL", "address": "34.1.2.3"})
+    add(g, "gcp_ip_sin_uso", "IP externa reservada hace 5 días que ningún recurso usa", ip, ([], []), {"unused_address"},
+        billing=billing(ip, 5, 0.24), expected_cost=("attributed", "low"))
+
+    ip = resource(33, "lb-ip", "gcp", "ip_address", status="IN_USE",
+                  attributes={"users": ["web-forwarding-rule"], "address_type": "EXTERNAL", "address": "34.9.9.9"})
+    add(g, "gcp_ip_en_uso", "IP externa usada por un balanceador → NO se recomienda liberar", ip, ([], []), set())
 
     # ─────────────── Datos faltantes / historial insuficiente ───────────────
     g = "Datos incompletos"
@@ -255,8 +320,16 @@ def show(scenario):
                            now=NOW, telemetry_available=scenario.get("telemetry_available", True),
                            history_available=scenario.get("history_available", True))
     findings = [f for f in findings if f["resource_id"] == scenario["item"]["id"]]
+    if "billing" in scenario:
+        assess_costs(_BillingTable(scenario["billing"]), "demo", findings,
+                     [scenario["item"], *scenario.get("others", [])], today=TODAY)
     got = {f["rule"] for f in findings}
     ok = got == scenario["expected"]
+    costs = [f["cost"] for f in findings if f.get("cost")]
+    if "expected_cost" in scenario:
+        status, confidence = scenario["expected_cost"]
+        cost = costs[0] if costs else {}
+        ok = ok and cost.get("status") == status and ((cost.get("savings") or {}).get("confidence") == confidence)
     item = scenario["item"]
     own = [x for x in scenario["recent"] if x["metric"]["resource_id"] == item["resource_id"]]
     hours = max((len(h["values"]) for h in scenario["history"] if h["metric"]["resource_id"] == item["resource_id"]), default=0)
@@ -277,9 +350,29 @@ def show(scenario):
             print(f"      Por qué: {ev['explanation']}")
         for action in f.get("actions", [])[:2]:
             print(f"      · {action}")
+        if f.get("cost"):
+            show_cost(f["cost"])
     if not ok:
         print(f"   ✘ Esperado: {sorted(scenario['expected'])}  ·  Obtenido: {sorted(got)}")
     return ok
+
+
+def show_cost(cost):
+    if cost["status"] != "attributed":
+        print(f"      $ Costo: no atribuible. {cost['reason']}")
+        return
+    currency = cost["currency"]
+    print(f"      $ Costo observado: {cost['observed_amount']:,.2f} {currency} en {cost['days_covered']} día(s) facturados "
+          f"({cost['period_start']} → {cost['period_end']}) · ~{cost['monthly_cost']:,.2f} {currency}/mes")
+    savings = cost["savings"]
+    if savings:
+        print(f"      $ Ahorro estimado: {savings['monthly_amount']:,.2f} {currency}/mes · confianza {savings['confidence']} "
+              f"· impacto sugerido {suggested_impact(cost)}")
+        print(f"        Fórmula: {savings['formula']}")
+        for assumption in savings["assumptions"]:
+            print(f"        Supuesto: {assumption}")
+    else:
+        print(f"      $ Ahorro: no estimado. {cost['reason']}")
 
 
 def main():

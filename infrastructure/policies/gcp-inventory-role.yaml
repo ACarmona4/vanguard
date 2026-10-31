@@ -5,7 +5,10 @@ includedPermissions:
   - cloudsql.databases.list
   - cloudsql.instances.get
   - cloudsql.instances.list
+  - compute.addresses.list
+  - compute.disks.list
   - compute.firewalls.list
+  - compute.globalAddresses.list
   - compute.instances.list
   - compute.networks.list
   - compute.subnetworks.list

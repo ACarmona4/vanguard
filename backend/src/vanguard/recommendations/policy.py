@@ -18,6 +18,13 @@ class Policy:
     queue_critical_seconds: float = 900
     network_growth_factor: float = 3
     network_min_bytes_per_second: float = 1024 * 1024
+    # Economic assessment: resource-level billing window and evidence needed for confidence.
+    cost_lookback_days: int = 30
+    cost_high_confidence_days: int = 14
+    cost_medium_confidence_days: int = 7
+    # Suggested impact from monthly savings, in the billing account currency.
+    savings_high: float = 50
+    savings_medium: float = 10
 
 
 DEFAULT_POLICY = Policy()
