@@ -18,6 +18,11 @@ _GCP_KINDS = {"instances": "compute_instance", "disk": "persistent_disk", "disks
 _GCP_NAME = re.compile(r"^//compute\.googleapis\.com/projects/[^/]+/(?:zones|regions|global)(?:/[^/]+)?/"
                        r"(?P<kind>[A-Za-z]+)/(?P<id>\d+)$")
 _GCS_NAME = re.compile(r"^//storage\.googleapis\.com/projects/[^/]+/buckets/(?P<name>[a-z0-9][a-z0-9._-]*)$")
+# Serverless names are unique per region; the inventory identifies them as "<region>/<name>".
+_SERVERLESS_NAME = re.compile(r"^//(?P<api>run|cloudfunctions)\.googleapis\.com/projects/[^/]+/locations/"
+                              r"(?P<region>[^/]+)/(?:services|functions)/(?P<name>[^/]+)$")
+_SERVERLESS_TYPES = {"run": "cloud_run_service", "cloudfunctions": "cloud_function"}
+_BIGQUERY_DATASET = re.compile(r"^//bigquery\.googleapis\.com/projects/[^/]+/datasets/(?P<name>[A-Za-z0-9_]+)$")
 _AWS_PREFIXES = {"i-": "ec2_instance", "vol-": "ebs_volume"}
 
 
@@ -29,6 +34,12 @@ def billing_key(provider, billed_id):
         bucket = _GCS_NAME.match(billed_id)
         if bucket:
             return "storage_bucket", bucket["name"]
+        dataset = _BIGQUERY_DATASET.match(billed_id)
+        if dataset:
+            return "bigquery_dataset", dataset["name"]
+        serverless = _SERVERLESS_NAME.match(billed_id)
+        if serverless:
+            return _SERVERLESS_TYPES[serverless["api"]], f"{serverless['region']}/{serverless['name']}"
         match = _GCP_NAME.match(billed_id)
         kind = _GCP_KINDS.get(match["kind"]) if match else None
         return (kind, match["id"]) if kind else None

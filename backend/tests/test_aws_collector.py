@@ -105,5 +105,76 @@ class AWSManagedServiceTests(unittest.TestCase):
         self.assertEqual(legacy.attributes["tags"], {})
 
 
+    def test_rds_instances_clusters_and_manual_snapshots(self):
+        rds = Mock()
+        pages = {
+            "describe_db_instances": [{"DBInstances": [{
+                "DBInstanceArn": "arn:aws:rds:us-east-1:123:db:orders", "DBInstanceIdentifier": "orders",
+                "DBInstanceStatus": "available", "Engine": "postgres", "EngineVersion": "11.22",
+                "DBInstanceClass": "db.m5.large", "MultiAZ": True, "StorageType": "gp2", "AllocatedStorage": 500,
+                "BackupRetentionPeriod": 7, "InstanceCreateTime": datetime(2025, 3, 1, tzinfo=timezone.utc),
+                "TagList": [{"Key": "env", "Value": "prod"}]}]}],
+            "describe_db_clusters": [{"DBClusters": [{
+                "DBClusterArn": "arn:aws:rds:us-east-1:123:cluster:events", "DBClusterIdentifier": "events",
+                "Status": "available", "Engine": "aurora-postgresql", "EngineMode": "provisioned",
+                "DBClusterMembers": [{"DBInstanceIdentifier": "events-1"}, {"DBInstanceIdentifier": "events-2"}],
+                "ServerlessV2ScalingConfiguration": {"MinCapacity": 0.5, "MaxCapacity": 8}}]}],
+            "describe_db_snapshots": [{"DBSnapshots": [{
+                "DBSnapshotArn": "arn:aws:rds:us-east-1:123:snapshot:orders-before-upgrade",
+                "DBSnapshotIdentifier": "orders-before-upgrade", "DBInstanceIdentifier": "orders",
+                "Status": "available", "AllocatedStorage": 500, "Encrypted": True,
+                "SnapshotCreateTime": datetime(2025, 6, 1, tzinfo=timezone.utc)}]}],
+            "describe_db_cluster_snapshots": [{"DBClusterSnapshots": [{
+                "DBClusterSnapshotArn": "arn:aws:rds:us-east-1:123:cluster-snapshot:events-manual",
+                "DBClusterSnapshotIdentifier": "events-manual", "DBClusterIdentifier": "events", "Status": "available"}]}],
+        }
+        paginators = {name: Mock(paginate=Mock(return_value=value)) for name, value in pages.items()}
+        rds.get_paginator.side_effect = lambda name: paginators[name]
+        item = collector(rds=rds)
+
+        [instance] = item.rds_instances("us-east-1")
+        [cluster] = item.rds_clusters("us-east-1")
+        instance_snapshot, cluster_snapshot = item.rds_snapshots("us-east-1")
+
+        self.assertEqual((instance.resource_type, instance.name, instance.status), ("rds_instance", "orders", "available"))
+        self.assertEqual(instance.resource_id, "arn:aws:rds:us-east-1:123:db:orders")
+        self.assertEqual((instance.attributes["instance_class"], instance.attributes["engine_version"]), ("db.m5.large", "11.22"))
+        self.assertEqual((instance.attributes["multi_az"], instance.attributes["allocated_storage_gb"]), (True, 500))
+        self.assertEqual(instance.attributes["created_at"], "2025-03-01T00:00:00+00:00")
+        self.assertEqual(instance.attributes["tags"], {"env": "prod"})
+        self.assertEqual((cluster.attributes["members"], cluster.attributes["serverless_v2_capacity"]), (2, [0.5, 8]))
+        paginators["describe_db_snapshots"].paginate.assert_called_once_with(SnapshotType="manual")
+        self.assertEqual((instance_snapshot.name, instance_snapshot.attributes["source"]), ("orders-before-upgrade", "orders"))
+        self.assertFalse(instance_snapshot.attributes["cluster_snapshot"])
+        self.assertEqual(instance_snapshot.attributes["allocated_storage_gb"], 500)
+        self.assertTrue(cluster_snapshot.attributes["cluster_snapshot"])
+        self.assertEqual(cluster_snapshot.attributes["source"], "events")
+
+    def test_lambda_functions_keep_memory_timeout_and_provisioned_concurrency(self):
+        lam = Mock()
+        lam.get_paginator.return_value = paginated("Functions", [
+            {"FunctionArn": "arn:aws:lambda:us-east-1:123:function:resize", "FunctionName": "resize",
+             "Runtime": "python3.12", "MemorySize": 1024, "Timeout": 30, "Architectures": ["x86_64"],
+             "PackageType": "Zip", "EphemeralStorage": {"Size": 512}, "LastModified": "2026-09-01T10:00:00.000+0000"},
+            {"FunctionArn": "arn:aws:lambda:us-east-1:123:function:legacy", "FunctionName": "legacy",
+             "Runtime": "nodejs18.x", "MemorySize": 128, "Timeout": 3},
+        ])
+        lam.list_tags.side_effect = [{"Tags": {"team": "media"}}, _Denied("lambda:ListTags")]
+        lam.list_provisioned_concurrency_configs.side_effect = [
+            {"ProvisionedConcurrencyConfigs": [{"AllocatedProvisionedConcurrentExecutions": 5},
+                                               {"AllocatedProvisionedConcurrentExecutions": 2}]},
+            _Denied("lambda:ListProvisionedConcurrencyConfigs"),
+        ]
+
+        resize, legacy = collector(**{"lambda": lam}).lambda_functions("us-east-1")
+
+        self.assertEqual((resize.resource_type, resize.name), ("lambda_function", "resize"))
+        self.assertEqual((resize.attributes["memory_mb"], resize.attributes["timeout_seconds"]), (1024, 30))
+        self.assertEqual((resize.attributes["architectures"], resize.attributes["ephemeral_storage_mb"]), (["x86_64"], 512))
+        self.assertEqual(resize.attributes["provisioned_concurrency"], 7)
+        self.assertEqual(resize.attributes["tags"], {"team": "media"})
+        self.assertIsNone(legacy.attributes["provisioned_concurrency"])
+        self.assertEqual(legacy.attributes["tags"], {})
+
 if __name__ == "__main__":
     unittest.main()

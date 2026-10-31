@@ -48,6 +48,23 @@ AWS = {
         Metric("messages_received_per_second", "Messages received", "messages/s", "NumberOfMessagesReceived", "Sum", 1 / 300, activity=True),
         Metric("empty_receives_per_second", "Empty receives", "requests/s", "NumberOfEmptyReceives", "Sum", 1 / 300, activity=True),
     )),
+    "rds_instance": ("AWS/RDS", "DBInstanceIdentifier", (
+        CPU,
+        Metric("freeable_memory_bytes", "Free memory", "B", "FreeableMemory"),
+        Metric("connections", "Database connections", "connections", "DatabaseConnections"),
+        # Aurora keeps storage and I/O at cluster level, so instances may not report them.
+        Metric("free_storage_bytes", "Free storage", "B", "FreeStorageSpace", optional=True),
+        Metric("read_iops", "Read IOPS", "operations/s", "ReadIOPS", optional=True),
+        Metric("write_iops", "Write IOPS", "operations/s", "WriteIOPS", optional=True),
+    )),
+    # Serverless functions report only while invoked, so every metric is an activity metric.
+    "lambda_function": ("AWS/Lambda", "FunctionName", (
+        Metric("invocations_per_second", "Invocations", "requests/s", "Invocations", "Sum", 1 / 300, activity=True),
+        Metric("errors_per_second", "Errors", "requests/s", "Errors", "Sum", 1 / 300, activity=True),
+        Metric("throttles_per_second", "Throttles", "requests/s", "Throttles", "Sum", 1 / 300, activity=True),
+        Metric("duration_ms", "Duration", "ms", "Duration", activity=True),
+        Metric("concurrent_executions", "Concurrent executions", "executions", "ConcurrentExecutions", "Maximum", activity=True),
+    )),
     "sns_topic": ("AWS/SNS", "TopicName", (
         Metric("published_per_second", "Published messages", "messages/s", "NumberOfMessagesPublished", "Sum", 1 / 300, activity=True),
         Metric("failed_per_second", "Failed deliveries", "messages/s", "NumberOfNotificationsFailed", "Sum", 1 / 300, activity=True),
@@ -68,6 +85,16 @@ GCP = {
         Metric("memory_percent", "Memory", "%", "cloudsql.googleapis.com/database/memory/utilization", scale=100),
         Metric("filesystem_percent", "Disk used", "%", "cloudsql.googleapis.com/database/disk/utilization", scale=100),
         Metric("connections", "PostgreSQL connections", "connections", "cloudsql.googleapis.com/database/postgresql/num_backends"),
+    )),
+    "cloud_run_service": ("cloud_run_revision", "service_name", (
+        Metric("requests_per_second", "Requests", "requests/s", "run.googleapis.com/request_count", "rate", activity=True),
+        Metric("instances", "Instances", "instances", "run.googleapis.com/container/instance_count", activity=True),
+        Metric("billable_instance_seconds", "Billable instance time", "s/s",
+               "run.googleapis.com/container/billable_instance_time", "rate", activity=True),
+    )),
+    "cloud_function": ("cloud_function", "function_name", (
+        Metric("invocations_per_second", "Invocations", "requests/s",
+               "cloudfunctions.googleapis.com/function/execution_count", "rate", activity=True),
     )),
     "pubsub_topic": ("pubsub_topic", "topic_id", (
         Metric("retained_bytes", "Retained messages", "B", "pubsub.googleapis.com/topic/retained_bytes"),

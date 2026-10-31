@@ -6,6 +6,11 @@ from typing import Any
 from ..models import CollectionResult, Resource
 
 DISABLED_SERVICE_REASONS = {"SERVICE_DISABLED", "accessNotConfigured"}
+# BigQuery metadata and job history change slowly, and INFORMATION_SCHEMA queries are billed:
+# refresh once per hour instead of on every inventory cycle.
+BIGQUERY_REFRESH_SECONDS = 3600
+_BIGQUERY_CACHE: dict[str, tuple[float, list]] = {}
+TABLE_DETAILS_LIMIT = 500
 
 
 def _has_disabled_service_reason(value: Any) -> bool:
@@ -40,6 +45,21 @@ def _last_path_part(value: str | None) -> str | None:
     return value.rsplit("/", 1)[-1] if value else None
 
 
+def _number(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _epoch_ms(value: Any) -> str | None:
+    """BigQuery returns timestamps as milliseconds since the epoch, as strings."""
+    from datetime import datetime, timezone
+
+    number = _number(value)
+    return datetime.fromtimestamp(number / 1000, timezone.utc).isoformat() if number else None
+
+
 def _seconds(value: Any) -> int | None:
     """Durations arrive as timedelta (client libraries) or "600s" (REST)."""
     if value in (None, ""):
@@ -67,6 +87,9 @@ class GCPCollector:
             ("compute.addresses", self.addresses),
             ("cloudsql.instances", self.sql_instances),
             ("storage.buckets", self.storage_buckets),
+            ("run.services", self.run_services),
+            ("cloudfunctions.functions", self.cloud_functions),
+            ("bigquery.datasets", self.bigquery),
             ("compute.networks", self.networks),
             ("compute.subnetworks", self.subnetworks),
             ("compute.firewalls", self.firewalls),
@@ -201,6 +224,186 @@ class GCPCollector:
                     break
                 params["pageToken"] = body["nextPageToken"]
         return resources
+
+    def _list_all(self, url: str, key: str) -> list[dict[str, Any]]:
+        from google.auth.transport.requests import AuthorizedSession
+
+        items, params = [], {}
+        with AuthorizedSession(self.credentials) as session:
+            while True:
+                response = session.get(url, params=params, timeout=20)
+                response.raise_for_status()
+                body = response.json()
+                items.extend(body.get(key, []))
+                if not body.get("nextPageToken"):
+                    return items
+                params["pageToken"] = body["nextPageToken"]
+
+    def run_services(self) -> list[Resource]:
+        resources = []
+        for service in self._list_all(
+            f"https://run.googleapis.com/v2/projects/{self.project_id}/locations/-/services", "services"
+        ):
+            region = service["name"].split("/locations/", 1)[1].split("/", 1)[0]
+            name = _last_path_part(service["name"])
+            template = service.get("template") or {}
+            container = (template.get("containers") or [{}])[0]
+            limits = (container.get("resources") or {}).get("limits") or {}
+            scaling = {**(template.get("scaling") or {}), **(service.get("scaling") or {})}
+            ready = (service.get("terminalCondition") or {}).get("state")
+            resources.append(Resource(
+                # Names are unique per region; billing and metrics identify services by name.
+                provider="gcp", resource_type="cloud_run_service", resource_id=f"{region}/{name}",
+                name=name, scope_id=self.project_id, region=region,
+                status="READY" if ready == "CONDITION_SUCCEEDED" else ready,
+                attributes={
+                    "cpu": limits.get("cpu"),
+                    "memory": limits.get("memory"),
+                    # cpuIdle=false keeps CPU allocated, and billed, even without requests.
+                    "cpu_always_allocated": (container.get("resources") or {}).get("cpuIdle") is False,
+                    "min_instances": int(scaling.get("minInstanceCount") or 0),
+                    "max_instances": scaling.get("maxInstanceCount"),
+                    "concurrency": template.get("maxInstanceRequestConcurrency"),
+                    "ingress": service.get("ingress"),
+                    "created_at": service.get("createTime"),
+                    "labels": service.get("labels") or {},
+                },
+                raw_data=service,
+            ))
+        return resources
+
+    def cloud_functions(self) -> list[Resource]:
+        resources = []
+        for function in self._list_all(
+            f"https://cloudfunctions.googleapis.com/v2/projects/{self.project_id}/locations/-/functions", "functions"
+        ):
+            region = function["name"].split("/locations/", 1)[1].split("/", 1)[0]
+            name = _last_path_part(function["name"])
+            config = function.get("serviceConfig") or {}
+            resources.append(Resource(
+                provider="gcp", resource_type="cloud_function", resource_id=f"{region}/{name}",
+                name=name, scope_id=self.project_id, region=region, status=function.get("state"),
+                attributes={
+                    "generation": function.get("environment"),
+                    "runtime": (function.get("buildConfig") or {}).get("runtime"),
+                    "memory": config.get("availableMemory"),
+                    "cpu": config.get("availableCpu"),
+                    "timeout_seconds": config.get("timeoutSeconds"),
+                    "min_instances": int(config.get("minInstanceCount") or 0),
+                    "max_instances": config.get("maxInstanceCount"),
+                    "run_service": _last_path_part(config.get("service")),
+                    "updated_at": function.get("updateTime"),
+                    "labels": function.get("labels") or {},
+                },
+                raw_data=function,
+            ))
+        return resources
+
+    def bigquery(self) -> list[Resource]:
+        import time
+
+        cached = _BIGQUERY_CACHE.get(self.project_id)
+        if cached and time.monotonic() - cached[0] < BIGQUERY_REFRESH_SECONDS:
+            return cached[1]
+        resources = self._bigquery_inventory()
+        _BIGQUERY_CACHE[self.project_id] = (time.monotonic(), resources)
+        return resources
+
+    def _bigquery_inventory(self) -> list[Resource]:
+        from urllib.parse import quote
+
+        from google.auth.transport.requests import AuthorizedSession
+
+        base = f"https://bigquery.googleapis.com/bigquery/v2/projects/{quote(self.project_id, safe='')}"
+        resources, tables = [], []
+        with AuthorizedSession(self.credentials) as session:
+            def get(url):
+                response = session.get(url, timeout=20)
+                response.raise_for_status()
+                return response.json()
+
+            datasets = self._list_all(f"{base}/datasets", "datasets")
+            for listed in datasets:
+                dataset_id = listed["datasetReference"]["datasetId"]
+                dataset = get(f"{base}/datasets/{quote(dataset_id, safe='')}")
+                resources.append(Resource(
+                    # The billing export names datasets by ID.
+                    provider="gcp", resource_type="bigquery_dataset", resource_id=dataset_id,
+                    name=dataset_id, scope_id=self.project_id, region=(dataset.get("location") or "").lower() or None,
+                    attributes={
+                        "default_table_expiration_ms": _number(dataset.get("defaultTableExpirationMs")),
+                        "default_partition_expiration_ms": _number(dataset.get("defaultPartitionExpirationMs")),
+                        "storage_billing_model": dataset.get("storageBillingModel") or "LOGICAL",
+                        "created_at": _epoch_ms(dataset.get("creationTime")),
+                        "labels": dataset.get("labels") or {},
+                    },
+                    raw_data=dataset,
+                ))
+                for table in self._list_all(f"{base}/datasets/{quote(dataset_id, safe='')}/tables", "tables"):
+                    tables.append((dataset, table))
+            for index, (dataset, table) in enumerate(tables):
+                dataset_id, table_id = dataset["datasetReference"]["datasetId"], table["tableReference"]["tableId"]
+                # Size needs one call per table; very large projects keep the listing fields only.
+                details = table if index >= TABLE_DETAILS_LIMIT else get(
+                    f"{base}/datasets/{quote(dataset_id, safe='')}/tables/{quote(table_id, safe='')}")
+                partitioning = details.get("timePartitioning") or details.get("rangePartitioning")
+                resources.append(Resource(
+                    provider="gcp", resource_type="bigquery_table", resource_id=f"{dataset_id}.{table_id}",
+                    name=f"{dataset_id}.{table_id}", scope_id=self.project_id,
+                    region=(dataset.get("location") or "").lower() or None,
+                    attributes={
+                        "dataset": dataset_id,
+                        "table_type": details.get("type"),
+                        "partitioned": bool(partitioning),
+                        "partition_field": (details.get("timePartitioning") or {}).get("field")
+                        or (details.get("rangePartitioning") or {}).get("field"),
+                        "clustered": bool(details.get("clustering")),
+                        "require_partition_filter": bool(details.get("requirePartitionFilter")
+                                                         or (details.get("timePartitioning") or {}).get("requirePartitionFilter")),
+                        "expires_at": _epoch_ms(details.get("expirationTime")),
+                        "size_bytes": _number(details.get("numBytes")),
+                        "long_term_bytes": _number(details.get("numLongTermBytes")),
+                        "rows": _number(details.get("numRows")),
+                        "created_at": _epoch_ms(details.get("creationTime")),
+                        "labels": details.get("labels") or {},
+                    },
+                    raw_data={key: value for key, value in details.items() if key != "schema"},
+                ))
+            usage = self._bigquery_usage(session, {(dataset.get("location") or "US") for dataset, _ in tables})
+        for resource in resources:
+            if resource.resource_type == "bigquery_table":
+                # None means the job history could not be read, not that the table is unused.
+                queries, billed = (None, None) if usage is None else usage.get(resource.resource_id, (0, 0))
+                resource.attributes["queries_7d"] = queries
+                resource.attributes["bytes_billed_7d"] = billed
+        return resources
+
+    def _bigquery_usage(self, session, locations) -> dict | None:
+        """Queries and bytes billed in the last 7 days by queries that read each table.
+
+        A query that joins two tables counts its bytes for both. Returns None when the
+        job history is not readable (bigquery.jobs.listAll), so tables show "unknown".
+        """
+        from ...costs.collectors import _bigquery_rows
+
+        parameters = [{"name": "project_id", "parameterType": {"type": "STRING"},
+                       "parameterValue": {"value": self.project_id}}]
+        usage: dict = {}
+        try:
+            for location in sorted(locations):
+                query = f"""
+                  SELECT CONCAT(ref.dataset_id, '.', ref.table_id) AS table_name,
+                         COUNT(DISTINCT job_id) AS queries, SUM(total_bytes_billed) AS bytes_billed
+                  FROM `region-{location.lower()}`.INFORMATION_SCHEMA.JOBS_BY_PROJECT, UNNEST(referenced_tables) AS ref
+                  WHERE creation_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+                    AND job_type = 'QUERY' AND state = 'DONE' AND ref.project_id = @project_id
+                  GROUP BY table_name
+                """
+                for row in _bigquery_rows(session, self.project_id, location, query, parameters):
+                    usage[row["table_name"]] = (int(row["queries"] or 0), int(row["bytes_billed"] or 0))
+        except Exception:
+            return None
+        return usage
 
     def storage_buckets(self) -> list[Resource]:
         from google.auth.transport.requests import AuthorizedSession

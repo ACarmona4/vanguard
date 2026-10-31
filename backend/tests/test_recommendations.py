@@ -257,6 +257,16 @@ class RecommendationEngineTests(unittest.TestCase):
         findings, _ = evaluate([table], recent, [], now=NOW)
         self.assertNotIn("missing_telemetry", rules(findings))
 
+    def test_aurora_instance_without_storage_metrics_follows_the_shared_cpu_rules(self):
+        db = resource(provider="aws", resource_type="rds_instance", resource_id="arn:events-1", name="events-1",
+                      status="available")
+        recent = [series(db, key, values) for key, values in
+                  (("cpu_percent", [7] * 4), ("freeable_memory_bytes", [2e9] * 4), ("connections", [3] * 4))]
+        findings, _ = evaluate([db], recent, [series(db, "cpu_percent", [7] * 168, history=True)], now=NOW)
+        self.assertNotIn("missing_telemetry", rules(findings))
+        self.assertNotIn("capacity_visibility", rules(findings))
+        self.assertIn("cpu_percent_oversized", rules(findings))
+
     def test_findings_have_stable_ids_and_priority(self):
         recent = [series(self.item, "cpu_percent", [95] * 4), series(self.item, "filesystem_percent", [85] * 4)]
         first, _ = evaluate([self.item], recent, [], now=NOW)

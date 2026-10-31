@@ -12,10 +12,14 @@ from .policy import DEFAULT_POLICY
 
 HISTORY_METRICS = (
     "cpu_percent", "filesystem_percent", "network_in_bytes_per_second", "network_out_bytes_per_second",
-    # Usage history for managed services: memory and connections (Cloud SQL), consumed capacity
+    # Usage history for managed services: memory and connections (Cloud SQL, RDS), consumed capacity
     # (DynamoDB), message traffic (SQS, SNS, Pub/Sub).
     "memory_percent", "connections", "read_units_per_second", "write_units_per_second",
     "messages_sent_per_second", "messages_received_per_second", "published_per_second", "acked_per_second",
+    # RDS reports free memory and storage in bytes, not as a percentage.
+    "freeable_memory_bytes", "free_storage_bytes",
+    # Serverless traffic: Lambda and Cloud Functions invocations, Cloud Run requests.
+    "invocations_per_second", "requests_per_second",
 )
 
 

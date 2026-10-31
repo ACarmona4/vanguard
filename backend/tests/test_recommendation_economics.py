@@ -55,6 +55,9 @@ class BillingKeyTests(unittest.TestCase):
             ("gcp", "//compute.googleapis.com/projects/1/regions/us-central1/addresses/712"): ("ip_address", "712"),
             ("gcp", "//compute.googleapis.com/projects/1/global/addresses/9"): ("ip_address", "9"),
             ("gcp", "//storage.googleapis.com/projects/_/buckets/acme.web-assets_2"): ("storage_bucket", "acme.web-assets_2"),
+            ("gcp", "//run.googleapis.com/projects/516/locations/us-central1/services/api"): ("cloud_run_service", "us-central1/api"),
+            ("gcp", "//cloudfunctions.googleapis.com/projects/516/locations/us-east1/functions/thumb"): ("cloud_function", "us-east1/thumb"),
+            ("gcp", "//bigquery.googleapis.com/projects/p/datasets/billing_export"): ("bigquery_dataset", "billing_export"),
             ("aws", "i-0abc"): ("ec2_instance", "i-0abc"),
             ("aws", "vol-0abc"): ("ebs_volume", "vol-0abc"),
         }
@@ -64,7 +67,7 @@ class BillingKeyTests(unittest.TestCase):
 
     def test_unknown_or_ambiguous_billing_names_are_not_matched(self):
         for provider, billed in (("gcp", "//storage.googleapis.com/projects/_/buckets/Invalid Name"),
-                                 ("gcp", "//bigquery.googleapis.com/projects/p/datasets/billing_export"),
+                                 ("gcp", "//bigquery.googleapis.com/projects/p/jobs/job_abc"),
                                  ("gcp", "//compute.googleapis.com/projects/1/zones/z/instances/name-not-id"),
                                  ("aws", "arn:aws:s3:::bucket"), ("gcp", None), ("aws", "")):
             with self.subTest(billed=billed):

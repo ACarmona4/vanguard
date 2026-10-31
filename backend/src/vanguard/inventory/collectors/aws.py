@@ -67,6 +67,10 @@ class AWSCollector:
                 ("sns.topics", lambda region=region: self.sns_topics(region)),
                 ("sqs.queues", lambda region=region: self.sqs_queues(region)),
                 ("dynamodb.tables", lambda region=region: self.dynamodb_tables(region)),
+                ("rds.instances", lambda region=region: self.rds_instances(region)),
+                ("rds.clusters", lambda region=region: self.rds_clusters(region)),
+                ("rds.snapshots", lambda region=region: self.rds_snapshots(region)),
+                ("lambda.functions", lambda region=region: self.lambda_functions(region)),
             ]
             for name, collector in regional:
                 self._collect_one(result, f"{region}.{name}", collector)
@@ -182,6 +186,124 @@ class AWSCollector:
                 ))
         return resources
 
+
+    @staticmethod
+    def _iso(value: Any) -> str | None:
+        return value.isoformat() if hasattr(value, "isoformat") else value
+
+    def rds_instances(self, region: str) -> list[Resource]:
+        client = self._client("rds", region_name=region)
+        resources = []
+        for page in client.get_paginator("describe_db_instances").paginate():
+            for db in page["DBInstances"]:
+                resources.append(self._resource(
+                    # CloudWatch identifies instances by name; the ARN keeps regions apart.
+                    "rds_instance", db["DBInstanceArn"], region=region,
+                    zone=db.get("AvailabilityZone"), name=db["DBInstanceIdentifier"],
+                    status=db.get("DBInstanceStatus"),
+                    attributes={
+                        "engine": db.get("Engine"),
+                        "engine_version": db.get("EngineVersion"),
+                        "instance_class": db.get("DBInstanceClass"),
+                        "multi_az": db.get("MultiAZ"),
+                        "storage_type": db.get("StorageType"),
+                        "allocated_storage_gb": db.get("AllocatedStorage"),
+                        "max_allocated_storage_gb": db.get("MaxAllocatedStorage"),
+                        "iops": db.get("Iops"),
+                        "cluster": db.get("DBClusterIdentifier"),
+                        "replica_of": db.get("ReadReplicaSourceDBInstanceIdentifier"),
+                        "backup_retention_days": db.get("BackupRetentionPeriod"),
+                        "deletion_protection": db.get("DeletionProtection"),
+                        "created_at": self._iso(db.get("InstanceCreateTime")),
+                        "tags": _tags(db.get("TagList")),
+                    },
+                    raw_data=db,
+                ))
+        return resources
+
+    def rds_clusters(self, region: str) -> list[Resource]:
+        client = self._client("rds", region_name=region)
+        resources = []
+        for page in client.get_paginator("describe_db_clusters").paginate():
+            for cluster in page["DBClusters"]:
+                scaling = cluster.get("ServerlessV2ScalingConfiguration") or {}
+                resources.append(self._resource(
+                    "rds_cluster", cluster["DBClusterArn"], region=region,
+                    name=cluster["DBClusterIdentifier"], status=cluster.get("Status"),
+                    attributes={
+                        "engine": cluster.get("Engine"),
+                        "engine_version": cluster.get("EngineVersion"),
+                        "engine_mode": cluster.get("EngineMode"),
+                        "members": len(cluster.get("DBClusterMembers") or []),
+                        "serverless_v2_capacity": [scaling.get("MinCapacity"), scaling.get("MaxCapacity")] if scaling else None,
+                        "storage_type": cluster.get("StorageType"),
+                        "multi_az": cluster.get("MultiAZ"),
+                        "backup_retention_days": cluster.get("BackupRetentionPeriod"),
+                        "deletion_protection": cluster.get("DeletionProtection"),
+                        "created_at": self._iso(cluster.get("ClusterCreateTime")),
+                        "tags": _tags(cluster.get("TagList")),
+                    },
+                    raw_data=cluster,
+                ))
+        return resources
+
+    def rds_snapshots(self, region: str) -> list[Resource]:
+        """Manual snapshots only: automated ones expire with the retention period."""
+        client = self._client("rds", region_name=region)
+        resources = []
+        for operation, key, id_key, source_key in (
+            ("describe_db_snapshots", "DBSnapshots", "DBSnapshotArn", "DBInstanceIdentifier"),
+            ("describe_db_cluster_snapshots", "DBClusterSnapshots", "DBClusterSnapshotArn", "DBClusterIdentifier"),
+        ):
+            for page in client.get_paginator(operation).paginate(SnapshotType="manual"):
+                for snapshot in page[key]:
+                    resources.append(self._resource(
+                        "rds_snapshot", snapshot[id_key], region=region,
+                        name=snapshot.get("DBSnapshotIdentifier") or snapshot.get("DBClusterSnapshotIdentifier"),
+                        status=snapshot.get("Status"),
+                        attributes={
+                            "source": snapshot.get(source_key),
+                            "cluster_snapshot": key == "DBClusterSnapshots",
+                            "engine": snapshot.get("Engine"),
+                            "engine_version": snapshot.get("EngineVersion"),
+                            "allocated_storage_gb": snapshot.get("AllocatedStorage"),
+                            "encrypted": snapshot.get("Encrypted"),
+                            "created_at": self._iso(snapshot.get("SnapshotCreateTime")),
+                            "tags": _tags(snapshot.get("TagList")),
+                        },
+                        raw_data=snapshot,
+                    ))
+        return resources
+
+    def lambda_functions(self, region: str) -> list[Resource]:
+        client = self._client("lambda", region_name=region)
+        resources = []
+        for page in client.get_paginator("list_functions").paginate():
+            for function in page["Functions"]:
+                arn, name = function["FunctionArn"], function["FunctionName"]
+                tags = _optional(lambda arn=arn: client.list_tags(Resource=arn).get("Tags", {}), {})
+                provisioned = _optional(lambda name=name: sum(
+                    item.get("AllocatedProvisionedConcurrentExecutions") or 0
+                    for item in client.list_provisioned_concurrency_configs(
+                        FunctionName=name).get("ProvisionedConcurrencyConfigs", [])
+                ))
+                resources.append(self._resource(
+                    "lambda_function", arn, region=region, name=name, status=function.get("State"),
+                    attributes={
+                        "runtime": function.get("Runtime"),
+                        "memory_mb": function.get("MemorySize"),
+                        "timeout_seconds": function.get("Timeout"),
+                        "architectures": function.get("Architectures") or [],
+                        "package_type": function.get("PackageType"),
+                        "ephemeral_storage_mb": (function.get("EphemeralStorage") or {}).get("Size"),
+                        # Provisioned concurrency is billed even without invocations.
+                        "provisioned_concurrency": provisioned,
+                        "last_modified": function.get("LastModified"),
+                        "tags": tags,
+                    },
+                    raw_data=function,
+                ))
+        return resources
 
     def s3_buckets(self) -> list[Resource]:
         client = self._client("s3")

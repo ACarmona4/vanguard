@@ -27,6 +27,9 @@ def _collector_with_sql_error(reason):
         "disks",
         "addresses",
         "storage_buckets",
+        "run_services",
+        "cloud_functions",
+        "bigquery",
         "networks",
         "subnetworks",
         "firewalls",
@@ -136,6 +139,106 @@ class GCPCollectorTests(unittest.TestCase):
         self.assertEqual((orders.attributes["subscriptions"], orders.attributes["retention_seconds"]), (2, 86400))
         self.assertIsNone(locked.attributes["subscriptions"])
         self.assertIsNone(locked.attributes["retention_seconds"])
+
+    def test_run_services_and_functions_keep_scaling_and_resources(self):
+        services = [{
+            "name": "projects/p/locations/us-central1/services/api", "createTime": "2026-05-01T00:00:00Z",
+            "ingress": "INGRESS_TRAFFIC_ALL", "labels": {"team": "web"},
+            "terminalCondition": {"state": "CONDITION_SUCCEEDED"},
+            "template": {"scaling": {"minInstanceCount": 2, "maxInstanceCount": 10}, "maxInstanceRequestConcurrency": 80,
+                         "containers": [{"resources": {"limits": {"cpu": "1", "memory": "512Mi"}, "cpuIdle": False}}]},
+        }, {"name": "projects/p/locations/europe-west1/services/api", "template": {"containers": [{}]}}]
+        functions = [{
+            "name": "projects/p/locations/us-central1/functions/thumbnail", "state": "ACTIVE", "environment": "GEN_2",
+            "buildConfig": {"runtime": "python312"},
+            "serviceConfig": {"availableMemory": "256M", "availableCpu": "0.1666", "timeoutSeconds": 60,
+                              "minInstanceCount": 1, "maxInstanceCount": 100,
+                              "service": "projects/p/locations/us-central1/services/thumbnail"},
+        }]
+        collector = GCPCollector("p", credentials=object())
+        collector._list_all = Mock(side_effect=lambda url, key: services if key == "services" else functions)
+
+        api, regional_twin = collector.run_services()
+        [thumbnail] = collector.cloud_functions()
+
+        self.assertEqual((api.resource_type, api.resource_id, api.name, api.region),
+                         ("cloud_run_service", "us-central1/api", "api", "us-central1"))
+        self.assertEqual(api.status, "READY")
+        self.assertEqual((api.attributes["cpu"], api.attributes["memory"]), ("1", "512Mi"))
+        self.assertTrue(api.attributes["cpu_always_allocated"])
+        self.assertEqual((api.attributes["min_instances"], api.attributes["concurrency"]), (2, 80))
+        self.assertEqual(regional_twin.resource_id, "europe-west1/api")
+        self.assertEqual(regional_twin.attributes["min_instances"], 0)
+        self.assertFalse(regional_twin.attributes["cpu_always_allocated"])
+        self.assertEqual((thumbnail.resource_type, thumbnail.resource_id), ("cloud_function", "us-central1/thumbnail"))
+        self.assertEqual((thumbnail.attributes["memory"], thumbnail.attributes["min_instances"]), ("256M", 1))
+        self.assertEqual((thumbnail.attributes["generation"], thumbnail.attributes["run_service"]), ("GEN_2", "thumbnail"))
+
+    def _bigquery_session(self):
+        base = "https://bigquery.googleapis.com/bigquery/v2/projects/p/datasets"
+        bodies = {
+            f"{base}/billing_export": {"datasetReference": {"datasetId": "billing_export"}, "location": "US",
+                                       "creationTime": "1767225600000", "labels": {"team": "finops"}},
+            f"{base}/billing_export/tables/gcp_billing_export_resource_v1": {
+                "tableReference": {"tableId": "gcp_billing_export_resource_v1"}, "type": "TABLE",
+                "timePartitioning": {"type": "DAY"}, "numBytes": "1048576", "numLongTermBytes": "0", "numRows": "1062",
+                "schema": {"fields": [{"name": "cost"}]}},
+            f"{base}/billing_export/tables/scratch": {
+                "tableReference": {"tableId": "scratch"}, "type": "TABLE", "numBytes": "2048",
+                "expirationTime": "1798761600000"},
+        }
+        session = Mock()
+        session.get.side_effect = lambda url, timeout: Mock(json=Mock(return_value=bodies[url]))
+        session.__enter__ = Mock(return_value=session)
+        session.__exit__ = Mock(return_value=False)
+        lists = {"datasets": [{"datasetReference": {"datasetId": "billing_export"}}],
+                 "tables": [{"tableReference": {"tableId": "gcp_billing_export_resource_v1"}},
+                            {"tableReference": {"tableId": "scratch"}}]}
+        return session, lists
+
+    def test_bigquery_datasets_tables_and_query_usage(self):
+        from vanguard.inventory.collectors import gcp
+
+        gcp._BIGQUERY_CACHE.clear()
+        session, lists = self._bigquery_session()
+        collector = GCPCollector("p", credentials=object())
+        collector._list_all = Mock(side_effect=lambda url, key: lists[key])
+        usage = [{"table_name": "billing_export.gcp_billing_export_resource_v1", "queries": "12", "bytes_billed": "524288000"}]
+        with patch("google.auth.transport.requests.AuthorizedSession", return_value=session), \
+                patch("vanguard.costs.collectors._bigquery_rows", return_value=usage) as rows:
+            dataset, billing, scratch = collector.bigquery()
+            self.assertEqual(collector.bigquery(), [dataset, billing, scratch])  # cached for the hour
+
+        rows.assert_called_once()
+        self.assertEqual(rows.call_args.args[2], "US")
+        self.assertIn("`region-us`.INFORMATION_SCHEMA.JOBS_BY_PROJECT", rows.call_args.args[3])
+        self.assertEqual((dataset.resource_type, dataset.resource_id, dataset.region), ("bigquery_dataset", "billing_export", "us"))
+        self.assertEqual(dataset.attributes["created_at"], "2026-01-01T00:00:00+00:00")
+        self.assertEqual(billing.resource_id, "billing_export.gcp_billing_export_resource_v1")
+        self.assertTrue(billing.attributes["partitioned"])
+        self.assertFalse(billing.attributes["clustered"])
+        self.assertEqual((billing.attributes["size_bytes"], billing.attributes["rows"]), (1048576, 1062))
+        self.assertEqual((billing.attributes["queries_7d"], billing.attributes["bytes_billed_7d"]), (12, 524288000))
+        self.assertNotIn("schema", billing.raw_data)
+        self.assertFalse(scratch.attributes["partitioned"])
+        self.assertEqual((scratch.attributes["queries_7d"], scratch.attributes["bytes_billed_7d"]), (0, 0))
+        self.assertEqual(scratch.attributes["expires_at"], "2027-01-01T00:00:00+00:00")
+
+    def test_bigquery_usage_is_unknown_without_job_history_permission(self):
+        from vanguard.inventory.collectors import gcp
+
+        gcp._BIGQUERY_CACHE.clear()
+        session, lists = self._bigquery_session()
+        collector = GCPCollector("p", credentials=object())
+        collector._list_all = Mock(side_effect=lambda url, key: lists[key])
+        with patch("google.auth.transport.requests.AuthorizedSession", return_value=session), \
+                patch("vanguard.costs.collectors._bigquery_rows", side_effect=PermissionError("bigquery.jobs.listAll")):
+            _, billing, _ = collector.bigquery()
+        gcp._BIGQUERY_CACHE.clear()
+
+        self.assertIsNone(billing.attributes["queries_7d"])
+        self.assertIsNone(billing.attributes["bytes_billed_7d"])
+        self.assertEqual(billing.attributes["size_bytes"], 1048576)
 
 if __name__ == "__main__":
     unittest.main()
