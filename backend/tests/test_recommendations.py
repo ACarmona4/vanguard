@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from vanguard.recommendations.analysis import evaluate_inventory
 from vanguard.recommendations.api import create_router
-from vanguard.recommendations.engine import evaluate
+from vanguard.recommendations.engine import confirmed_checks, evaluate
 from vanguard.recommendations.schemas import (
     Finding,
 )
@@ -126,6 +126,30 @@ class RecommendationEngineTests(unittest.TestCase):
         self.assertEqual(summary["without_data"], 1)
         self.assertEqual(summary["cost_opportunities"], 0)
 
+    def test_ebs_only_instance_without_local_disk_metrics_is_not_missing_telemetry(self):
+        self.item = resource(provider="aws", resource_type="ec2_instance", status="running")
+        reported = ("cpu_percent", "network_in_bytes_per_second", "network_out_bytes_per_second")
+        findings, _ = self.run_engine([series(self.item, key, [7] * 4) for key in reported])
+        self.assertNotIn("missing_telemetry", findings)
+        findings, _ = self.run_engine([series(self.item, key, [7] * 4) for key in reported[:2]])
+        self.assertEqual(findings["missing_telemetry"]["description"], "No recent readings for: Network out.")
+        self.assertEqual(findings["missing_telemetry"]["evidence"]["explanation"],
+                         "2 of 3 required metrics have recent readings.")
+
+    def test_idle_event_resources_are_not_missing_telemetry_when_the_account_reports(self):
+        topic = resource(provider="aws", resource_type="sns_topic", resource_id="idle-topic", status=None)
+        vm = resource(id=2, provider="aws", resource_type="ec2_instance", resource_id="i-1", status="running")
+        findings, _ = evaluate([topic], [], [], now=NOW)
+        self.assertIn("missing_telemetry", rules(findings))
+        findings, _ = evaluate([topic, vm], [series(vm, "cpu_percent", [7] * 4)], [], now=NOW)
+        self.assertNotIn("missing_telemetry", {f["rule"] for f in findings if f["resource_id"] == topic["id"]})
+        other_account = {**vm, "scope_id": "project-b"}
+        findings, _ = evaluate([topic, other_account], [series(other_account, "cpu_percent", [7] * 4)], [], now=NOW)
+        self.assertIn("missing_telemetry", {f["rule"] for f in findings if f["resource_id"] == topic["id"]})
+        stale = series(vm, "cpu_percent", [7] * 4, stamps=[NOW - 7200 + i * 300 for i in range(4)])
+        findings, _ = evaluate([topic, vm], [stale], [], now=NOW)
+        self.assertIn("missing_telemetry", {f["rule"] for f in findings if f["resource_id"] == topic["id"]})
+
     def test_another_owners_same_cloud_resource_cannot_influence_results(self):
         outsider = resource(owner_id="owner-b")
         findings, summary = self.run_engine([series(outsider, "cpu_percent", [99] * 4)])
@@ -179,6 +203,69 @@ class RecommendationEngineTests(unittest.TestCase):
             item = {**self.item, **overrides}
             findings, _ = evaluate([item], [], [], now=NOW)
             self.assertNotIn("unattached_volume", rules(findings))
+
+    def test_unattached_gcp_disk_is_reviewed_like_an_ebs_volume(self):
+        disk = resource(provider="gcp", resource_type="persistent_disk", resource_id="364", status="READY",
+                        attributes={"users": [], "size_gb": 50}, raw_data={})
+        finding = rules(evaluate([disk], [], [], now=NOW, telemetry_available=False)[0])["unattached_volume"]
+        self.assertIn("50 GB", finding["evidence"]["explanation"])
+        for overrides in ({"attributes": {"users": ["vm-1"]}}, {"attributes": {}}, {"status": "CREATING"},
+                          {"last_seen_at": datetime.fromtimestamp(NOW - 3600, timezone.utc)}):
+            findings, _ = evaluate([{**disk, **overrides}], [], [], now=NOW)
+            self.assertNotIn("unattached_volume", rules(findings))
+        def checks(item):
+            return confirmed_checks([item], [], [], now=NOW, telemetry_available=False, history_available=False)
+
+        self.assertIn("1:unattached_volume", checks({**disk, "attributes": {"users": ["vm-1"]}}))
+        self.assertNotIn("1:unattached_volume", checks({**disk, "attributes": {}}))
+
+    def test_only_reserved_external_addresses_without_users_are_unused(self):
+        address = resource(provider="gcp", resource_type="ip_address", resource_id="712", status="RESERVED",
+                           attributes={"users": [], "address_type": "EXTERNAL", "address": "34.1.2.3"}, raw_data={})
+        finding = rules(evaluate([address], [], [], now=NOW)[0])["unused_address"]
+        self.assertIn("34.1.2.3", finding["evidence"]["explanation"])
+        for overrides in ({"status": "IN_USE"}, {"attributes": {"users": ["lb"], "address_type": "EXTERNAL"}},
+                          {"attributes": {"users": [], "address_type": "INTERNAL"}}):
+            findings, _ = evaluate([{**address, **overrides}], [], [], now=NOW)
+            self.assertNotIn("unused_address", rules(findings))
+
+    def test_stopped_instance_reports_its_billed_volumes_once(self):
+        mappings = {"BlockDeviceMappings": [{"Ebs": {"VolumeId": "vol-a"}}, {"Ebs": {"VolumeId": "vol-b"}}],
+                    "StateTransitionReason": "User initiated (2026-10-01 10:00:00 GMT)"}
+        vm = resource(provider="aws", resource_type="ec2_instance", resource_id="i-1", status="stopped", raw_data=mappings)
+        volumes = [resource(id=index, provider="aws", resource_type="ebs_volume", resource_id=volume_id, status="in-use",
+                            raw_data={"Size": size, "Attachments": [{"InstanceId": "i-1"}]})
+                   for index, volume_id, size in ((2, "vol-a", 8), (3, "vol-b", 100))]
+        findings, _ = evaluate([vm, *volumes], [], [], now=NOW)
+        self.assertEqual([f["rule"] for f in findings], ["stopped_instance_storage"])
+        finding = findings[0]
+        self.assertEqual((finding["evidence"]["value"], finding["evidence"]["unit"]), (108, "GB"))
+        self.assertIn("2 EBS volume(s)", finding["description"])
+        self.assertIn("vol-a, vol-b", finding["evidence"]["explanation"])
+        self.assertIn("User initiated", finding["evidence"]["explanation"])
+        running, _ = evaluate([{**vm, "status": "running"}, *volumes], [], [], now=NOW)
+        self.assertNotIn("stopped_instance_storage", rules(running))
+        without_volumes, _ = evaluate([vm], [], [], now=NOW)
+        self.assertNotIn("stopped_instance_storage", rules(without_volumes))
+        checked = confirmed_checks([{**vm, "status": "running"}], [], [], now=NOW,
+                                   telemetry_available=False, history_available=False)
+        self.assertIn("1:stopped_instance_storage", checked)
+
+    def test_on_demand_table_without_provisioned_capacity_metrics_is_not_missing_telemetry(self):
+        table = resource(provider="aws", resource_type="dynamodb_table", resource_id="arn:sessions", status="ACTIVE")
+        recent = [series(table, key, [3] * 4) for key in ("read_units_per_second", "write_units_per_second")]
+        findings, _ = evaluate([table], recent, [], now=NOW)
+        self.assertNotIn("missing_telemetry", rules(findings))
+
+    def test_aurora_instance_without_storage_metrics_follows_the_shared_cpu_rules(self):
+        db = resource(provider="aws", resource_type="rds_instance", resource_id="arn:events-1", name="events-1",
+                      status="available")
+        recent = [series(db, key, values) for key, values in
+                  (("cpu_percent", [7] * 4), ("freeable_memory_bytes", [2e9] * 4), ("connections", [3] * 4))]
+        findings, _ = evaluate([db], recent, [series(db, "cpu_percent", [7] * 168, history=True)], now=NOW)
+        self.assertNotIn("missing_telemetry", rules(findings))
+        self.assertNotIn("capacity_visibility", rules(findings))
+        self.assertIn("cpu_percent_oversized", rules(findings))
 
     def test_findings_have_stable_ids_and_priority(self):
         recent = [series(self.item, "cpu_percent", [95] * 4), series(self.item, "filesystem_percent", [85] * 4)]

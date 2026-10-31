@@ -30,7 +30,7 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yaml
       - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.time=35d
     volumes:
       - ./observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
       - vanguard-prometheus:/prometheus

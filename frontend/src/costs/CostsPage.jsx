@@ -125,7 +125,7 @@ export default function CostsPage() {
       </section>
 
       <section className="cost-panel cost-trend-panel">
-        <div className="section-heading"><div><h2>Spend over time</h2><p className="muted">Daily net cost, including credits.</p></div><strong>{money(total?.amount, currency)}</strong></div>
+        <div className="section-heading"><div><h2>Spend over time</h2><p className="muted">Daily usage cost, before credits.</p></div><strong>{money(total?.amount, currency)}</strong></div>
         <CostTrend points={data?.trend || []} currency={currency} />
       </section>
 

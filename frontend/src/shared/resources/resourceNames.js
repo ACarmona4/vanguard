@@ -16,5 +16,17 @@ export const resourceNames = {
   pubsub_subscription: "Pub/Sub Subscription",
   service_account: "Service Account",
   project_iam_policy: "IAM Policy",
+  persistent_disk: "Persistent Disk",
+  ip_address: "IP Address",
+  s3_bucket: "S3 Bucket",
+  storage_bucket: "Cloud Storage Bucket",
+  rds_instance: "RDS Instance",
+  rds_cluster: "Aurora / RDS Cluster",
+  rds_snapshot: "RDS Snapshot",
+  lambda_function: "Lambda Function",
+  cloud_run_service: "Cloud Run Service",
+  cloud_function: "Cloud Function",
+  bigquery_dataset: "BigQuery Dataset",
+  bigquery_table: "BigQuery Table",
 };
 export const typeName = (value) => resourceNames[value] || value;

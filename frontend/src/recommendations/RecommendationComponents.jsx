@@ -3,6 +3,7 @@ import Metric from "../shared/components/Metric";
 import { date } from "../shared/utils/format";
 import { metricValue } from "../utilization/api";
 import { typeName } from "../shared/resources/resourceNames";
+import { costDay, money } from "../costs/format";
 
 import { CATEGORY_LABELS, PRIORITY_LABELS, SEVERITY_LABELS, STATE_LABELS } from "./labels";
 
@@ -25,6 +26,31 @@ export function RecommendationStats({ summary, loading, unavailable = false }) {
   ))}</div>;
 }
 
+const CONFIDENCE_LABELS = { high: "High", medium: "Medium", low: "Low" };
+const SOURCE_LABELS = { gcp_billing_export: "GCP billing export", aws_cost_explorer: "AWS Cost Explorer" };
+
+function CostEvidence({ cost }) {
+  if (cost.status !== "attributed") {
+    return <div className="finding-cost"><p><strong>Cost:</strong> not attributable. {cost.reason}</p></div>;
+  }
+  const { savings } = cost;
+  return <div className="finding-cost">
+    <div className="finding-evidence">
+      <div><span>{savings ? "Estimated savings" : "Current cost"}</span><strong>{money(savings ? savings.monthly_amount : cost.monthly_cost, cost.currency)} / month</strong></div>
+      <div><span>Observed cost</span><strong>{money(cost.observed_amount, cost.currency)}</strong></div>
+      <div><span>Billed days</span><strong>{cost.days_covered} · {costDay(cost.period_start)} – {costDay(cost.period_end)}</strong></div>
+      <div><span>Confidence</span><strong>{savings ? CONFIDENCE_LABELS[savings.confidence] : "—"}</strong></div>
+    </div>
+    <details>
+      <summary>How this was calculated</summary>
+      {savings && <p>{savings.formula}.</p>}
+      {cost.reason && <p>{cost.reason}</p>}
+      {savings && <ul>{savings.assumptions.map((item) => <li key={item}>{item}</li>)}</ul>}
+      <p className="muted">Source: {SOURCE_LABELS[cost.source] || cost.source} · resource-level billing lines</p>
+    </details>
+  </div>;
+}
+
 export function FindingCard({ finding, compact = false, children }) {
   const evidence = finding.evidence;
   return <article className={`finding-card finding-${finding.severity}`}>
@@ -40,6 +66,7 @@ export function FindingCard({ finding, compact = false, children }) {
     <h3>{finding.title}</h3>
     <p className="finding-resource"><strong>{finding.resource_name}</strong> · {finding.provider.toUpperCase()} · {typeName(finding.resource_type)} · {finding.region || "Global"}</p>
     <p><strong>Reason:</strong> {finding.description}</p>
+    {compact && finding.cost?.savings && <p><strong>Estimated savings:</strong> {money(finding.cost.savings.monthly_amount, finding.cost.currency)} / month</p>}
     {!compact && <>
       {finding.actions[0] && <p><strong>Suggested action:</strong> {finding.actions[0]}</p>}
       {finding.last_detected_at && <p className="muted">Detected {date(finding.first_detected_at)} · Last seen {date(finding.last_detected_at)} · {finding.is_current ? "Still detected" : "No longer detected"}</p>}
@@ -49,6 +76,7 @@ export function FindingCard({ finding, compact = false, children }) {
         <div><span>Period / readings</span><strong>{evidence.window} / {evidence.samples}</strong></div>
         <div><span>Last reading</span><strong>{evidence.observed_at ? date(evidence.observed_at) : "From inventory"}</strong></div>
       </div>
+      {finding.cost && <CostEvidence cost={finding.cost} />}
       <details>
         <summary>Details</summary>
         <p>{evidence.explanation}</p>

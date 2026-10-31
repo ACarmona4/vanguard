@@ -40,6 +40,47 @@ class NativeMetricsCatalogTests(unittest.TestCase):
         self.assertIn("memory_percent", keys)
         self.assertIn("filesystem_percent", keys)
 
+    def test_managed_service_traffic_metrics_never_require_traffic(self):
+        cases = {
+            ("aws", "sqs_queue"): {"messages_sent_per_second", "messages_received_per_second", "empty_receives_per_second"},
+            ("gcp", "pubsub_topic"): {"published_per_second"},
+            ("gcp", "pubsub_subscription"): {"acked_per_second"},
+        }
+        for (provider, resource_type), keys in cases.items():
+            metrics = {metric.key: metric for metric in metrics_for({"provider": provider, "resource_type": resource_type})}
+            for key in keys:
+                with self.subTest(resource_type=resource_type, key=key):
+                    self.assertTrue(metrics[key].activity)
+        dynamodb = {metric.key: metric for metric in metrics_for({"provider": "aws", "resource_type": "dynamodb_table"})}
+        self.assertTrue(dynamodb["provisioned_read_units"].optional)
+        self.assertTrue(dynamodb["provisioned_write_units"].optional)
+
+    def test_storage_groups_include_object_buckets(self):
+        self.assertIn("storage_bucket", resource_types_for("storage"))
+        self.assertIn("s3_bucket", resource_types_for("storage"))
+        self.assertEqual(metrics_for({"provider": "gcp", "resource_type": "storage_bucket"}), ())
+
+    def test_rds_instances_use_native_metrics_and_tolerate_aurora_storage(self):
+        metrics = {metric.key: metric for metric in metrics_for({"provider": "aws", "resource_type": "rds_instance"})}
+        self.assertTrue({"cpu_percent", "freeable_memory_bytes", "connections"} <= set(metrics))
+        for key in ("free_storage_bytes", "read_iops", "write_iops"):
+            self.assertTrue(metrics[key].optional)
+        self.assertIn("rds_instance", resource_types_for("databases"))
+        self.assertIn("rds_snapshot", resource_types_for("storage"))
+
+    def test_serverless_metrics_only_exist_with_traffic(self):
+        for provider, resource_type in (("aws", "lambda_function"), ("gcp", "cloud_run_service"), ("gcp", "cloud_function")):
+            metrics = metrics_for({"provider": provider, "resource_type": resource_type})
+            with self.subTest(resource_type=resource_type):
+                self.assertTrue(metrics)
+                self.assertTrue(all(metric.activity for metric in metrics))
+        self.assertEqual(set(resource_types_for("serverless")), {"lambda_function", "cloud_run_service", "cloud_function"})
+
+    def test_bigquery_is_inventory_only_in_the_analytics_group(self):
+        self.assertEqual(set(resource_types_for("analytics")), {"bigquery_dataset", "bigquery_table"})
+        for resource_type in ("bigquery_dataset", "bigquery_table"):
+            self.assertEqual(metrics_for({"provider": "gcp", "resource_type": resource_type}), ())
+
     def test_shared_filters_group_equivalent_cloud_resources(self):
         self.assertEqual(
             set(resource_types_for("instances")),
@@ -47,7 +88,7 @@ class NativeMetricsCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             set(resource_types_for("databases")),
-            {"dynamodb_table", "cloudsql_instance"},
+            {"dynamodb_table", "cloudsql_instance", "rds_instance", "rds_cluster"},
         )
         self.assertIsNone(resource_types_for("ec2_instance"))
 

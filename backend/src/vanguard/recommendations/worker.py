@@ -28,9 +28,13 @@ class RecommendationWorker:
         with psycopg.connect(
             database_url, row_factory=dict_row, connect_timeout=5
         ) as connection:
+            # Workspaces whose connections are all disabled collect nothing new; re-evaluating
+            # them would only turn their stale inventory into missing-metric findings.
             organizations = connection.execute(
-                "SELECT DISTINCT owner_id AS id FROM inventory_resources WHERE owner_id IS NOT NULL "
-                "UNION SELECT DISTINCT organization_id AS id FROM recommendation_findings"
+                "SELECT o.id FROM (SELECT DISTINCT owner_id AS id FROM inventory_resources WHERE owner_id IS NOT NULL "
+                "UNION SELECT DISTINCT organization_id AS id FROM recommendation_findings) AS o "
+                "WHERE NOT EXISTS (SELECT 1 FROM cloud_connections c WHERE c.owner_id = o.id) "
+                "OR EXISTS (SELECT 1 FROM cloud_connections c WHERE c.owner_id = o.id AND c.enabled)"
             ).fetchall()
 
         def collect_one(organization):

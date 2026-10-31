@@ -11,6 +11,7 @@ from ..inventory.schemas import ResourceFilters
 from ..utilization.catalog import metrics_for
 from ..utilization.service import MetricsUnavailable, query_series
 from ..utilization.worker import metrics_worker
+from . import economics
 from .engine import INACTIVE, confirmed_checks, evaluate
 from .policy import DEFAULT_POLICY, SOURCES
 from .telemetry import query_history
@@ -21,8 +22,10 @@ def evaluate_inventory(connection, owner_id):
     where, values = _where(query, owner_id)
     rows = connection.execute(
         sql.SQL(
-            "SELECT id, owner_id, provider, scope_id, region, resource_type, resource_id, "
+            "SELECT id, owner_id, connection_id, provider, scope_id, region, resource_type, resource_id, "
             "name, status, attributes, jsonb_build_object('Attachments', raw_data->'Attachments', "
+            "'Size', raw_data->'Size', 'BlockDeviceMappings', raw_data->'BlockDeviceMappings', "
+            "'StateTransitionReason', raw_data->'StateTransitionReason', "
             "'settings', jsonb_build_object('dataDiskSizeGb', raw_data#>'{{settings,dataDiskSizeGb}}')) AS raw_data, "
             "last_seen_at FROM inventory_resources WHERE {} ORDER BY id"
         ).format(where),
@@ -58,6 +61,8 @@ def evaluate_inventory(connection, owner_id):
         telemetry_available=available,
         history_available=historical,
     )
+    economics.assess(connection, owner_id, items, rows)
+    connection.commit()
     collection = metrics_worker.snapshot(owner_id)
     if collection["status"] in {"partial", "error", "disabled"}:
         notices.append(

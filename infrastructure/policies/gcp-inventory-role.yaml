@@ -5,17 +5,27 @@ includedPermissions:
   - cloudsql.databases.list
   - cloudsql.instances.get
   - cloudsql.instances.list
+  - cloudfunctions.functions.list
+  - compute.addresses.list
+  - compute.disks.list
   - compute.firewalls.list
+  - compute.globalAddresses.list
   - compute.instances.list
   - compute.networks.list
   - compute.subnetworks.list
   - iam.serviceAccounts.list
   - pubsub.subscriptions.list
   - pubsub.topics.list
+  - pubsub.topics.listSubscriptions
   - resourcemanager.projects.get
   - resourcemanager.projects.getIamPolicy
+  - run.services.list
+  - storage.buckets.list
 
   - monitoring.timeSeries.list
+  - bigquery.datasets.get
   - bigquery.jobs.create
+  - bigquery.jobs.listAll
   - bigquery.tables.get
   - bigquery.tables.getData
+  - bigquery.tables.list

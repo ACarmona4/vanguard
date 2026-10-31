@@ -394,7 +394,9 @@ class RecommendationWorkflowTests(unittest.TestCase):
         self.assertFalse(self.detail()["finding"]["is_current"])
         self.assertEqual(self.detail()["events"][-1]["event_type"], "condition_cleared")
         self.save({**self.report, "generated_at": self.at + timedelta(seconds=4)})
-        all_items = self.client.get("/api/recommendations?workflow_status=all").json()[
+        all_items = self.client.get(
+            "/api/recommendations?workflow_status=all&detection=all"
+        ).json()[
             "items"
         ]
         self.assertEqual(len(all_items), 2)
@@ -402,6 +404,118 @@ class RecommendationWorkflowTests(unittest.TestCase):
         self.assertEqual(renewed["workflow_status"], "detected")
         self.assertTrue(renewed["is_current"])
         self.assertEqual(self.detail()["finding"]["workflow_status"], "rejected")
+
+    def test_cleared_findings_move_to_resolved_and_leave_active_counts(self):
+        def report(detection):
+            result = self.client.get(f"/api/recommendations?detection={detection}")
+            self.assertEqual(result.status_code, 200, result.text)
+            return result.json()
+
+        active = report("current")
+        self.assertEqual([item["id"] for item in active["items"]], [str(self.finding_id)])
+        self.assertEqual(active["summary"]["recommendations"], 1)
+        self.assertEqual(active["summary"]["cleared"], 0)
+        self.assertEqual(report("cleared")["items"], [])
+
+        self.save({**self.report, "generated_at": self.at + timedelta(seconds=1), "items": []})
+        active = report("current")
+        self.assertEqual(active["items"], [])
+        self.assertEqual(active["summary"]["recommendations"], 0)
+        self.assertEqual(active["summary"]["cost_opportunities"], 0)
+        self.assertEqual(active["summary"]["cleared"], 1)
+        resolved = report("cleared")
+        self.assertEqual([item["id"] for item in resolved["items"]], [str(self.finding_id)])
+        self.assertFalse(resolved["items"][0]["is_current"])
+        self.assertEqual(resolved["items"][0]["workflow_status"], "detected")
+        self.assertEqual(len(report("all")["items"]), 1)
+        self.assertEqual(self.client.get("/api/recommendations/summary").json()["items"], [])
+        self.assertEqual(self.client.get("/api/recommendations?detection=gone").status_code, 422)
+
+        self.save({**self.report, "generated_at": self.at + timedelta(seconds=2)})
+        active = report("current")
+        self.assertEqual(len(active["items"]), 1)
+        self.assertNotEqual(active["items"][0]["id"], str(self.finding_id))
+        self.assertEqual(active["summary"]["cleared"], 1)
+
+    def test_findings_for_resources_removed_from_inventory_are_resolved(self):
+        self.connection.execute(
+            "DELETE FROM cloud_connections WHERE owner_id = %s AND id = %s",
+            (self.organization_id, self.cloud_id),
+        )
+        self.connection.commit()
+        self.save({**self.report, "generated_at": self.at + timedelta(seconds=1),
+                   "items": [], "checked_keys": []})
+        detail = self.detail()
+        self.assertFalse(detail["finding"]["is_current"])
+        self.assertEqual(detail["finding"]["workflow_status"], "detected")
+        self.assertEqual(detail["events"][-1]["event_type"], "condition_cleared")
+        self.assertEqual(detail["events"][-1]["note"], "The resource is no longer in the inventory.")
+        self.assertEqual(self.client.get("/api/recommendations").json()["items"], [])
+
+    def test_billing_suggests_cost_impact_until_a_person_assesses_it(self):
+        cost = {"status": "attributed", "source": "gcp_billing_export", "granularity": "resource",
+                "currency": "USD", "period_start": "2026-10-01", "period_end": "2026-10-20", "days_covered": 20,
+                "observed_amount": 40.0, "daily_average": 2.0, "monthly_cost": 60.0, "reason": None,
+                "savings": {"monthly_amount": 60.0, "formula": "Average daily cost × 30 days",
+                            "confidence": "high", "assumptions": ["Usage cost before credits."]}}
+        self.save({**self.report, "generated_at": self.at + timedelta(seconds=1),
+                   "items": [{**self.finding, "cost": cost}]})
+        finding = self.detail()["finding"]
+        self.assertEqual(finding["cost"]["savings"]["monthly_amount"], 60.0)
+        self.assertEqual(finding["economic_impact"], "high")
+        self.assertIn("Estimated savings: 60.00 USD/month (high confidence)", finding["priority_reason"])
+        listed = self.client.get("/api/recommendations").json()["items"][0]
+        self.assertEqual(listed["cost"]["currency"], "USD")
+
+        response = self.client.put(
+            f"/api/recommendations/{self.finding_id}/priority",
+            headers={"X-CSRF-Token": self.csrf},
+            json={"version": finding["version"], "note": "Reviewed with the owner: backup volume",
+                  "business_relevance": "high", "economic_impact": "low"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.save({**self.report, "generated_at": self.at + timedelta(seconds=2),
+                   "items": [{**self.finding, "cost": cost}]})
+        self.assertEqual(self.detail()["finding"]["economic_impact"], "low")
+
+    def test_background_analysis_skips_workspaces_with_only_disabled_connections(self):
+        from vanguard.recommendations import worker
+
+        evaluated = []
+        with patch.object(worker, "collect_workspace", lambda connection, organization: evaluated.append(organization)):
+            worker.recommendation_worker.collect()
+            self.assertEqual(evaluated, [self.organization_id])
+            self.connection.execute("UPDATE cloud_connections SET enabled = FALSE WHERE id = %s", (self.cloud_id,))
+            self.connection.commit()
+            evaluated.clear()
+            worker.recommendation_worker.collect()
+            self.assertEqual(evaluated, [])
+            self.connection.execute("DELETE FROM cloud_connections WHERE id = %s", (self.cloud_id,))
+            self.connection.commit()
+            worker.recommendation_worker.collect()
+            self.assertEqual(evaluated, [self.organization_id])
+
+    def test_sections_split_findings_without_overlap(self):
+        alert = {**self.finding, "id": "1:cpu_percent_high", "rule": "cpu_percent_high", "kind": "alert",
+                 "severity": "critical", "category": "performance"}
+        change = {**self.finding, "id": "1:storage_exhaustion", "rule": "storage_exhaustion",
+                  "category": "capacity", "severity": "warning"}
+        hint = {**self.finding, "id": "1:insufficient_history", "rule": "insufficient_history", "kind": "suggestion",
+                "category": "observability"}
+        self.save({**self.report, "generated_at": self.at + timedelta(seconds=1),
+                   "items": [self.finding, alert, change, hint]})
+
+        def rules(section):
+            result = self.client.get(f"/api/recommendations?section={section}")
+            self.assertEqual(result.status_code, 200, result.text)
+            return [item["rule"] for item in result.json()["items"]]
+
+        self.assertEqual(rules("savings"), ["cpu_percent_oversized"])
+        self.assertEqual(rules("alerts"), ["cpu_percent_high"])
+        self.assertEqual(rules("changes"), ["storage_exhaustion"])
+        self.assertEqual(rules("monitoring"), ["insufficient_history"])
+        self.assertEqual(self.client.get("/api/recommendations").json()["total"], 4)
+        self.assertEqual(self.client.get("/api/recommendations?section=other").status_code, 422)
 
     def test_stale_analysis_cannot_overwrite_newer_data(self):
         changed = {**self.finding, "description": "Newer observed condition"}
