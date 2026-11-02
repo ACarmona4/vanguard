@@ -44,7 +44,7 @@ class MetricsWorker:
         with psycopg.connect(database_url, row_factory=dict_row, connect_timeout=5) as connection:
             configured = cloud_connections.worker_connections(connection)
             resources = connection.execute(
-                "SELECT owner_id, connection_id, provider, scope_id, region, resource_type, resource_id, name, attributes "
+                "SELECT owner_id, connection_id, provider, scope_id, region, resource_type, resource_id, name, attributes, last_seen_at "
                 "FROM inventory_resources WHERE owner_id IS NOT NULL AND connection_id IS NOT NULL"
             ).fetchall()
         grouped = defaultdict(list)

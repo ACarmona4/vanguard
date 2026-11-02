@@ -17,7 +17,8 @@ function MetricStatus({ metric }) {
         ? date(metric.observed_at)
         : metric.status === "stale"
           ? `Stale data · ${date(metric.observed_at)}`
-          : "No data published"}
+          : metric.activity ? "No traffic data published" : "No data published"}
+      {metric.source === "inventory" && " · Inventory metadata"}
     </span>
   );
 }
@@ -98,6 +99,7 @@ function ResourceHistory({ id, onClose }) {
           <option value="1">Last hour</option>
           <option value="6">Last 6 hours</option>
           <option value="24">Last 24 hours</option>
+          <option value="168">Last 7 days</option>
         </select>
       </label>
       <Notification message={error} type="error" />
@@ -174,7 +176,8 @@ export default function UtilizationPage() {
       <section className="page-heading">
         <div>
           <h1>Utilization</h1>
-          <p>Real metrics from your cloud machines and services.</p>
+          <p>Usage, capacity, traffic and storage from your cloud machines and services.</p>
+          <p className="muted">Serverless and messaging metrics depend on traffic. Storage measurements can arrive daily; no data does not mean zero usage.</p>
         </div>
       </section>
       {linkedId && <ResourceHistory id={linkedId} onClose={() => setLinkedId(null)} />}

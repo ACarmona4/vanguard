@@ -69,7 +69,7 @@ def create_router(database_dependency, user_dependency):
     return router
 
 
-METRIC_COLUMNS = "id, owner_id, provider, scope_id, region, resource_type, resource_id, name, attributes"
+METRIC_COLUMNS = "id, owner_id, provider, scope_id, region, resource_type, resource_id, name, attributes, last_seen_at"
 
 
 def _metric_where(filters, owner_id):

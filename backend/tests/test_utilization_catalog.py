@@ -58,7 +58,7 @@ class NativeMetricsCatalogTests(unittest.TestCase):
     def test_storage_groups_include_object_buckets(self):
         self.assertIn("storage_bucket", resource_types_for("storage"))
         self.assertIn("s3_bucket", resource_types_for("storage"))
-        self.assertEqual(metrics_for({"provider": "gcp", "resource_type": "storage_bucket"}), ())
+        self.assertEqual({metric.key for metric in metrics_for({"provider": "gcp", "resource_type": "storage_bucket"})}, {"storage_bytes", "objects", "requests_per_second"})
 
     def test_rds_instances_use_native_metrics_and_tolerate_aurora_storage(self):
         metrics = {metric.key: metric for metric in metrics_for({"provider": "aws", "resource_type": "rds_instance"})}
@@ -76,10 +76,12 @@ class NativeMetricsCatalogTests(unittest.TestCase):
                 self.assertTrue(all(metric.activity for metric in metrics))
         self.assertEqual(set(resource_types_for("serverless")), {"lambda_function", "cloud_run_service", "cloud_function"})
 
-    def test_bigquery_is_inventory_only_in_the_analytics_group(self):
+    def test_bigquery_has_storage_and_metadata_metrics_without_fictitious_cpu(self):
         self.assertEqual(set(resource_types_for("analytics")), {"bigquery_dataset", "bigquery_table"})
         for resource_type in ("bigquery_dataset", "bigquery_table"):
-            self.assertEqual(metrics_for({"provider": "gcp", "resource_type": resource_type}), ())
+            metrics = metrics_for({"provider": "gcp", "resource_type": resource_type})
+            self.assertIn("storage_bytes", {metric.key for metric in metrics})
+            self.assertNotIn("cpu_percent", {metric.key for metric in metrics})
 
     def test_shared_filters_group_equivalent_cloud_resources(self):
         self.assertEqual(

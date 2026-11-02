@@ -13,6 +13,7 @@ import { useAuth } from "../auth/AuthProvider";
 import CostTrend from "../costs/components/CostTrend";
 import { useCosts } from "../costs/api";
 import { money } from "../costs/format";
+import ExchangeRateNotice from "../costs/ExchangeRateNotice";
 import { getInventory } from "../inventory/api";
 import { typeName } from "../shared/resources/resourceNames";
 import Metric from "../shared/components/Metric";
@@ -79,7 +80,7 @@ export default function DashboardPage() {
 
   const summary = data?.summary;
   const collection = data?.collection;
-  const currency = costs?.totals?.[0]?.currency || costs?.trend?.[0]?.currency || "USD";
+  const currency = "USD";
   const total = costs?.totals?.find((item) => item.currency === currency);
   const change = total?.change_percent;
   const topTypes = useMemo(
@@ -114,7 +115,7 @@ export default function DashboardPage() {
         </div>
         <div className="dashboard-spend">
           <div className="dashboard-spend-heading">
-            <span>Cloud spend</span>
+            <span>Cloud spend (USD)</span>
             <span>Last 30 days</span>
           </div>
           <strong>{costsLoading ? "—" : money(total?.amount, currency)}</strong>
@@ -124,7 +125,7 @@ export default function DashboardPage() {
                 <>{change > 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}{change > 0 ? "+" : ""}{change.toFixed(1)}%</>
               )}
             </span>
-            <span>{costs?.estimated ? "Estimated" : "Provider reported"}</span>
+            <span>{costs?.conversion?.status === "partial" ? "Partial conversion" : costs?.estimated ? "Estimated" : "Normalized to USD"}</span>
           </div>
           <div className="dashboard-cloud-chips">
             {(costs?.by_provider || []).filter((item) => item.currency === currency).map((item) => (
@@ -133,6 +134,8 @@ export default function DashboardPage() {
           </div>
         </div>
       </section>
+
+      <ExchangeRateNotice conversion={costs?.conversion} compact />
 
       <section className="metrics dashboard-metrics" aria-label="Cloud summary">
         <Metric label="Inventoried resources" value={summary?.total ?? 0} icon={Box} caption="Across all connected clouds" loading={!data} />

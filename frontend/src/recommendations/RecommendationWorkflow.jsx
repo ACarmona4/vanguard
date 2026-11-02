@@ -39,6 +39,16 @@ export default function RecommendationWorkflow({ finding, onUpdated }) {
     finally { if (!controller.signal.aborted) setBusy(false); }
   }
 
+  async function createTicket() {
+    if (busy) return;
+    setBusy(true); setError("");
+    try {
+      const ticket = await apiRequest("tickets", {method:"POST",body:JSON.stringify({finding_id:finding.id,version:current.version,note:note.trim().length >= 3 ? note : "Created for implementation planning."})});
+      window.location.hash = `accounts?ticket=${ticket.id}`;
+    } catch (failure) {setError(failure.message);}
+    finally {setBusy(false);}
+  }
+
   async function submit(event) {
     event.preventDefault();
     const action = event.nativeEvent.submitter?.value;
@@ -59,11 +69,13 @@ export default function RecommendationWorkflow({ finding, onUpdated }) {
   }
 
   return <details className="recommendation-workflow" onToggle={(event) => { if (event.target === event.currentTarget && event.currentTarget.open && !detail && !busy) load(); }}>
-    <summary>Review and history</summary>
+    <summary>Decision, ticket and history</summary>
     <Notification message={error} type="error" />
     <p>Cost impact: <strong>{IMPACT_LABELS[current.economic_impact]}</strong> · Business relevance: <strong>{PRIORITY_LABELS[current.business_relevance]}</strong></p>
     <button className="button" type="button" disabled={busy} onClick={() => load(detail?.offset || 0)}>Refresh details</button>
-    {operator && current.workflow_status === "approved" && <p>Record the result after applying the approved change.</p>}
+    {operator && !closed && <button className="button" type="button" disabled={busy} onClick={createTicket}>Open implementation ticket</button>}
+    <p>Approval creates a ticket. Recording execution closes it. <a href="#accounts">View tickets in profile</a></p>
+    {operator && current.workflow_status === "approved" && <p>Apply the approved change in your cloud, then record the result and change ticket here.</p>}
     {operator && detail && !closed && <form className="recommendation-workflow-form" onSubmit={submit}>
       <div className="recommendation-criteria">
         <label>Business relevance<select aria-label="Business relevance" value={relevance} onChange={(event) => setRelevance(event.target.value)} disabled={busy}>
@@ -73,7 +85,7 @@ export default function RecommendationWorkflow({ finding, onUpdated }) {
           {["unknown", "low", "medium", "high"].map((value) => <option key={value} value={value}>{IMPACT_LABELS[value]}</option>)}
         </select></label>
       </div>
-      <label>Reason or change details<textarea aria-label="Reason or change details" required minLength={3} maxLength={2000} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Explain the decision or add a change ticket." disabled={busy} /></label>
+      <label>Reason or change details<textarea aria-label="Reason or change details" required minLength={3} maxLength={2000} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Add the reason, change ticket and validation result." disabled={busy} /></label>
       <div className="recommendation-workflow-actions">
         <button className="button" value="priority" disabled={busy}>Save priority</button>
         {admin && current.workflow_status === "detected" && <button className="button primary" value="approve" disabled={busy || criteriaChanged}>Approve action</button>}
@@ -84,7 +96,7 @@ export default function RecommendationWorkflow({ finding, onUpdated }) {
       {!admin && current.workflow_status === "detected" && <p>An administrator must approve this action first.</p>}
     </form>}
     {!operator && <p>You have read-only access.</p>}
-    {closed && <p>This recommendation is closed.</p>}
+    {closed && <p>{current.workflow_status === "executed" ? "Execution has been recorded." : "This recommendation was rejected."}</p>}
     {busy && <p role="status">Updating…</p>}
     {detail && <>
       <ol className="recommendation-timeline">{detail.events.map((event) => <li key={event.id}>

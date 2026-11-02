@@ -15,6 +15,7 @@ import { useAuth } from "../auth/AuthProvider";
 import Notification from "../shared/components/Notification";
 import { date } from "../shared/utils/format";
 import CostTrend from "./components/CostTrend";
+import ExchangeRateNotice from "./ExchangeRateNotice";
 import { costDay, money } from "./format";
 import { configureGcpCosts, syncCosts, useCosts } from "./api";
 
@@ -72,14 +73,11 @@ export default function CostsPage() {
   const admin = ["owner", "admin"].includes(user.role);
   const [filters, setFilters] = useState({ days: "30", provider: "all", infrastructure: "" });
   const [category, setCategory] = useState("");
-  const [selectedCurrency, setSelectedCurrency] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [notice, setNotice] = useState({ message: "", type: "success" });
   const dismissNotice = useCallback(() => setNotice({ message: "", type: "success" }), []);
   const { data, error, loading, reload } = useCosts(filters);
-  const currency = data?.totals?.some((item) => item.currency === selectedCurrency)
-    ? selectedCurrency
-    : data?.totals?.[0]?.currency || data?.trend?.[0]?.currency || "USD";
+  const currency = "USD";
   const total = data?.totals?.find((item) => item.currency === currency);
   const average = data?.daily_average?.find((item) => item.currency === currency)?.amount || 0;
   const resources = useMemo(
@@ -103,7 +101,7 @@ export default function CostsPage() {
   return (
     <main id="costs">
       <section className="page-heading">
-        <div><h1>Costs</h1><p>Cloud spend, trends, and cost drivers.</p></div>
+        <div><h1>Costs</h1><p>AWS and Google Cloud spend together in USD.</p></div>
         <button className="button" onClick={synchronize} disabled={syncing || user.role === "viewer"}>
           {syncing ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />} Sync
         </button>
@@ -114,11 +112,13 @@ export default function CostsPage() {
         <label><CalendarDays size={15} /><select value={filters.days} onChange={(event) => setFilters({ ...filters, days: event.target.value })}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label>
         <label><Cloud size={15} /><select value={filters.provider} onChange={(event) => { setFilters({ ...filters, provider: event.target.value, infrastructure: "" }); setCategory(""); }}><option value="all">All clouds</option><option value="aws">AWS</option><option value="gcp">Google Cloud</option></select></label>
         <label><Server size={15} /><select value={filters.infrastructure} onChange={(event) => { setFilters({ ...filters, infrastructure: event.target.value }); setCategory(""); }}><option value="">All {filters.provider === "all" ? "infrastructure" : "services"}</option>{(data?.infrastructure_options || []).map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-        {data?.totals?.length > 1 && <label><Coins size={15} /><select value={currency} onChange={(event) => setSelectedCurrency(event.target.value)}>{data.totals.map((item) => <option key={item.currency} value={item.currency}>{item.currency}</option>)}</select></label>}
+        <span className="cost-detail-badge">USD</span>
       </div>
 
+      <ExchangeRateNotice conversion={data?.conversion} />
+
       <section className="metrics cost-metrics">
-        <article className="metric"><div className="metric-label">Spend <Coins size={16} /></div><div className="metric-value">{loading ? "—" : money(total?.amount, currency)}</div><span className="muted">{data ? `${data.estimated ? "Estimated · " : ""}${costDay(data.period.start)} – ${costDay(data.period.end)}` : "Selected period"}</span></article>
+        <article className="metric"><div className="metric-label">Spend (USD) <Coins size={16} /></div><div className="metric-value">{loading ? "—" : money(total?.amount, currency)}</div><span className="muted">{data ? `${data.estimated ? "Estimated · " : ""}${costDay(data.period.start)} – ${costDay(data.period.end)}` : "Selected period"}</span></article>
         <article className="metric"><div className="metric-label">Change {total?.change_percent > 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}</div><div className={`metric-value ${total?.change_percent > 0 ? "cost-increase" : "cost-decrease"}`}>{total?.change_percent == null ? "—" : `${total.change_percent > 0 ? "+" : ""}${total.change_percent.toFixed(1)}%`}</div><span className="muted">Against previous period</span></article>
         <article className="metric"><div className="metric-label">Daily average <CalendarDays size={16} /></div><div className="metric-value">{loading ? "—" : money(average, currency)}</div><span className="muted">Across the selected period</span></article>
         <article className="metric"><div className="metric-label">Billed services <Server size={16} /></div><div className="metric-value">{loading ? "—" : data?.service_count || 0}</div><span className="muted">Services in this period</span></article>
@@ -141,13 +141,13 @@ export default function CostsPage() {
         </section>
         <section className="cost-panel">
           <div className="section-heading"><h2>{category ? `${category} resources` : "Top resources"}</h2>{category && <button className="text-button" onClick={() => setCategory("")}>Clear</button>}</div>
-          <div className="table-scroll"><table><thead><tr><th>Resource</th><th>Cloud</th><th>Cost</th></tr></thead><tbody>{resources.filter((item) => item.currency === currency).map((item) => <tr key={`${item.provider}-${item.resource_id}`}><td><strong>{item.resource_name || item.resource_id}</strong><small className="cost-service">{item.service}</small></td><td>{item.provider.toUpperCase()}</td><td><strong>{money(item.amount, item.currency)}</strong></td></tr>)}</tbody></table></div>
+          <div className="table-scroll"><table><thead><tr><th>Resource</th><th>Cloud</th><th>Cost</th></tr></thead><tbody>{resources.filter((item) => item.currency === currency).map((item) => <tr key={`${item.connection_id}-${item.service}-${item.resource_id}-${item.currency}`}><td><strong>{item.inventory_id ? <a href={`#utilization?resource=${item.inventory_id}`}>{item.resource_name || item.resource_id}</a> : item.resource_name || item.resource_id}</strong><small className="cost-service">{item.service}</small></td><td>{item.provider.toUpperCase()}</td><td><strong title={item.original_currency ? `Original: ${money(item.original_amount, item.original_currency)}` : undefined}>{money(item.amount, item.currency)}</strong></td></tr>)}</tbody></table></div>
           {!resources.length && <p className="cost-table-empty">Resource-level data is not available for this selection.</p>}
         </section>
       </div>
 
       <section className="cost-panel cost-sources">
-        <div className="section-heading"><div><h2>Cost sources</h2><p className="muted">AWS Cost Explorer and GCP detailed billing export.</p></div><Settings2 size={18} /></div>
+        <div className="section-heading"><div><h2>Cost sources</h2><p className="muted">AWS Cost Explorer and GCP detailed billing export. Resource detail must be enabled for each AWS service; GCP needs the detailed export. Totals remain available when individual resources cannot be matched.</p></div><Settings2 size={18} /></div>
         <div className="connection-list">
           {(data?.sources || []).map((source) => <article className="cost-source" key={source.connection_id}><div className={`provider-mark ${source.provider}`}>{source.provider.toUpperCase()}</div><div className="connection-info"><div className="connection-title"><strong>{source.connection_name}</strong><span className={`connection-status ${source.status}`}>{source.status}</span></div><small>{source.scope_id}{source.last_synced_at && ` · Synced ${date(source.last_synced_at)}`}</small>{source.last_error && <small className="connection-error">{source.last_error}</small>}{admin && source.provider === "gcp" && <GcpSourceForm source={source} onSaved={reload} />}</div><span className="cost-detail-badge">{source.detail_available ? "Resource detail" : "Service totals"}</span></article>)}
         </div>

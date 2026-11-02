@@ -72,6 +72,12 @@ class CostResource(CostAmount):
     resource_id: str
     resource_name: str | None
     region: str | None
+    original_currency: str | None = None
+    original_amount: float | None = None
+    inventory_id: int | None = None
+    resource_type: str | None = None
+    connection_id: UUID | None = None
+    scope_id: str | None = None
 
 
 class CostPeriod(BaseModel):
@@ -80,7 +86,28 @@ class CostPeriod(BaseModel):
     days: int
 
 
+class UnconvertedCost(CostAmount):
+    records: int
+
+
+class CostConversion(BaseModel):
+    status: Literal["ready", "stale", "partial", "not_needed"]
+    method: Literal["daily_historical_trm"]
+    source: str
+    source_url: str
+    cop_per_usd: float | None
+    valid_from: date | None
+    valid_to: date | None
+    updated_at: datetime | None
+    last_error: str | None
+    original_totals: list[CostAmount]
+    unconverted: list[UnconvertedCost]
+    comparison_complete: bool
+
+
 class CostOverview(BaseModel):
+    display_currency: Literal["USD"] = "USD"
+    conversion: CostConversion
     period: CostPeriod
     totals: list[CostTotal]
     daily_average: list[CostAmount]

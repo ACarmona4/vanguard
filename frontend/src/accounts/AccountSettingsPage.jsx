@@ -27,6 +27,8 @@ import { useAuth } from "../auth/AuthProvider";
 import { apiRequest } from "../api/client";
 import Notification from "../shared/components/Notification";
 
+import TicketsPanel from "../tickets/TicketsPanel";
+
 const initialAWS = {
   name: "",
   regions: "us-east-1",
@@ -344,6 +346,8 @@ export default function AccountSettingsPage() {
           <button className="button full account-submit">Update password</button>
         </form>
       </section>
+
+      <TicketsPanel />
 
       <section className="accounts-grid">
         <div className="connection-panel">

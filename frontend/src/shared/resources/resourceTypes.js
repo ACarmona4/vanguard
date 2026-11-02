@@ -10,8 +10,8 @@ export const resourceGroups = [
 ];
 
 export const utilizationTypesByProvider = {
-  aws: ["ec2_instance", "ebs_volume", "dynamodb_table", "rds_instance", "lambda_function", "sqs_queue", "sns_topic"],
-  gcp: ["compute_instance", "cloudsql_instance", "cloud_run_service", "cloud_function", "pubsub_topic", "pubsub_subscription"],
+  aws: ["ec2_instance", "ebs_volume", "dynamodb_table", "rds_instance", "rds_cluster", "rds_snapshot", "s3_bucket", "lambda_function", "sqs_queue", "sns_topic"],
+  gcp: ["compute_instance", "cloudsql_instance", "cloud_run_service", "cloud_function", "storage_bucket", "bigquery_dataset", "bigquery_table", "pubsub_topic", "pubsub_subscription"],
 };
 
 export const utilizationGroups = resourceGroups.filter((group) =>

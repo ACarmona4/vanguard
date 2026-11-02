@@ -8,6 +8,9 @@ from typing import Any
 
 from psycopg.rows import dict_row
 
+from . import exchange
+from .identity import billing_key, resource_billing_keys
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS cost_sources (
     connection_id UUID PRIMARY KEY REFERENCES cloud_connections(id) ON DELETE CASCADE,
@@ -49,6 +52,8 @@ CREATE INDEX IF NOT EXISTS cost_records_owner_level_period_idx
 CREATE INDEX IF NOT EXISTS cost_records_connection_period_idx
     ON cost_records (connection_id, usage_date);
 """
+
+SCHEMA_SQL += exchange.SCHEMA_SQL
 
 SOURCE_COLUMNS = """
 s.connection_id, s.provider, c.name AS connection_name, c.scope_id,
@@ -219,9 +224,10 @@ def overview(
     if infrastructure:
         base_values.append(infrastructure)
 
-    current = connection.execute(f"""
+    conversion = exchange.metadata(connection, owner_id, start, end, provider, infrastructure)
+    current = connection.execute(exchange.NORMALIZED_CTE + f"""
         SELECT currency, COALESCE(sum(amount), 0) AS amount
-        FROM cost_records
+        FROM normalized_costs
         WHERE owner_id = %s AND level = 'service'
           AND usage_date >= %s AND usage_date < %s {filter_clause}
         GROUP BY currency ORDER BY currency
@@ -231,9 +237,9 @@ def overview(
         previous_values.append(provider)
     if infrastructure:
         previous_values.append(infrastructure)
-    previous = connection.execute(f"""
+    previous = connection.execute(exchange.NORMALIZED_CTE + f"""
         SELECT currency, COALESCE(sum(amount), 0) AS amount
-        FROM cost_records
+        FROM normalized_costs
         WHERE owner_id = %s AND level = 'service'
           AND usage_date >= %s AND usage_date < %s {filter_clause}
         GROUP BY currency
@@ -242,7 +248,7 @@ def overview(
     totals = []
     for row in current:
         prior = previous_by_currency.get(row["currency"], Decimal(0))
-        change = ((row["amount"] - prior) / prior * 100) if prior else None
+        change = ((row["amount"] - prior) / prior * 100) if prior and conversion["comparison_complete"] and conversion["status"] != "partial" else None
         totals.append({
             "currency": row["currency"],
             "amount": float(row["amount"]),
@@ -252,18 +258,18 @@ def overview(
 
     def grouped(column: str, limit: int | None = None) -> list[dict[str, Any]]:
         limit_sql = f"LIMIT {int(limit)}" if limit else ""
-        rows = connection.execute(f"""
+        rows = connection.execute(exchange.NORMALIZED_CTE + f"""
             SELECT {column} AS name, currency, sum(amount) AS amount
-            FROM cost_records
+            FROM normalized_costs
             WHERE owner_id = %s AND level = 'service'
               AND usage_date >= %s AND usage_date < %s {filter_clause}
             GROUP BY {column}, currency ORDER BY amount DESC {limit_sql}
         """, base_values).fetchall()
         return [{**row, "amount": float(row["amount"])} for row in rows]
 
-    trend_rows = connection.execute(f"""
+    trend_rows = connection.execute(exchange.NORMALIZED_CTE + f"""
         SELECT usage_date AS date, currency, sum(amount) AS amount
-        FROM cost_records
+        FROM normalized_costs
         WHERE owner_id = %s AND level = 'service'
           AND usage_date >= %s AND usage_date < %s {filter_clause}
         GROUP BY usage_date, currency ORDER BY usage_date, currency
@@ -282,20 +288,22 @@ def overview(
                 "currency": currency,
                 "amount": trend_index.get((current_day, currency), 0.0),
             })
-    resource_rows = connection.execute(f"""
-        WITH aggregated AS (
-          SELECT r.owner_id, r.connection_id, r.provider, r.service, r.category,
+    resource_rows = connection.execute(exchange.NORMALIZED_CTE + f"""
+        , aggregated AS (
+          SELECT r.owner_id, r.connection_id, r.scope_id, r.provider, r.service, r.category,
                  r.currency, r.resource_id, max(r.resource_name) AS billed_name,
-                 max(r.region) AS region, sum(r.amount) AS amount
-          FROM cost_records r
+                 max(r.region) AS region, sum(r.amount) AS amount,
+                 CASE WHEN count(DISTINCT r.original_currency) = 1 THEN max(r.original_currency) END AS original_currency,
+                 CASE WHEN count(DISTINCT r.original_currency) = 1 THEN sum(r.original_amount) END AS original_amount
+          FROM normalized_costs r
           WHERE r.owner_id = %s AND r.level = 'resource'
             AND r.usage_date >= %s AND r.usage_date < %s
             {"AND r.provider = %s" if provider != "all" else ""}
             {f"AND r.{infrastructure_column} = %s" if infrastructure else ""}
-          GROUP BY r.owner_id, r.connection_id, r.provider, r.service,
+          GROUP BY r.owner_id, r.connection_id, r.scope_id, r.provider, r.service,
                    r.category, r.currency, r.resource_id
         )
-        SELECT a.provider, a.service, a.category, a.currency, a.resource_id,
+        SELECT a.connection_id, a.scope_id, a.provider, a.service, a.category, a.currency, a.resource_id,
                COALESCE(
                  (SELECT i.name FROM inventory_resources i
                   WHERE i.owner_id = a.owner_id AND i.connection_id = a.connection_id
@@ -303,28 +311,48 @@ def overview(
                   ORDER BY i.id LIMIT 1),
                  a.billed_name, a.resource_id
                ) AS resource_name,
-               a.region, a.amount
+               a.region, a.amount, a.original_currency, a.original_amount
         FROM aggregated a
         ORDER BY amount DESC LIMIT 25
     """, base_values).fetchall()
-    service_count = connection.execute(f"""
+    # GCP global names and AWS SQS ARNs differ from inventory identifiers.
+    # Match only within this organization, connection and project/account.
+    inventory_rows = connection.execute(
+        "SELECT id, connection_id, scope_id, region, provider, resource_type, resource_id, name, attributes "
+        "FROM inventory_resources WHERE owner_id = %s AND connection_id = ANY(%s)",
+        (owner_id, [row["connection_id"] for row in resource_rows]),
+    ).fetchall() if resource_rows else []
+    inventory_index = {}
+    for item in inventory_rows:
+        for billing_identity in resource_billing_keys(item):
+            key = (str(item["connection_id"]), item["scope_id"], *billing_identity)
+            if key not in inventory_index or item["resource_type"] == "cloud_function":
+                inventory_index[key] = item
+    for row in resource_rows:
+        key = billing_key(row["provider"], row["resource_id"])
+        item = inventory_index.get((str(row["connection_id"]), row["scope_id"], *key)) if key else None
+        row["inventory_id"] = item["id"] if item else None
+        row["resource_type"] = item["resource_type"] if item else None
+        if item and item.get("name"):
+            row["resource_name"] = item["name"]
+    service_count = connection.execute(exchange.NORMALIZED_CTE + f"""
         SELECT count(DISTINCT (service, currency)) AS count
-        FROM cost_records
+        FROM normalized_costs
         WHERE owner_id = %s AND level = 'service'
           AND usage_date >= %s AND usage_date < %s {filter_clause}
     """, base_values).fetchone()["count"]
-    estimated = connection.execute(f"""
+    estimated = connection.execute(exchange.NORMALIZED_CTE + f"""
         SELECT COALESCE(bool_or(estimated), FALSE) AS estimated
-        FROM cost_records
+        FROM normalized_costs
         WHERE owner_id = %s AND level = 'service'
           AND usage_date >= %s AND usage_date < %s {filter_clause}
     """, base_values).fetchone()["estimated"]
     option_values: list[Any] = [owner_id, start, end]
     if provider != "all":
         option_values.append(provider)
-    option_rows = connection.execute(f"""
+    option_rows = connection.execute(exchange.NORMALIZED_CTE + f"""
         SELECT DISTINCT {infrastructure_column} AS value
-        FROM cost_records
+        FROM normalized_costs
         WHERE owner_id = %s AND level = 'service'
           AND usage_date >= %s AND usage_date < %s {provider_clause}
           AND {infrastructure_column} IS NOT NULL
@@ -332,6 +360,8 @@ def overview(
     """, option_values).fetchall()
     sources = list_sources(connection, owner_id)
     return {
+        "display_currency": "USD",
+        "conversion": conversion,
         "period": {"start": start, "end": end - timedelta(days=1), "days": days},
         "totals": totals,
         "daily_average": [
@@ -342,7 +372,7 @@ def overview(
         "by_category": grouped("category"),
         "top_services": grouped("service", 12),
         "trend": trend,
-        "top_resources": [{**row, "amount": float(row["amount"])} for row in resource_rows],
+        "top_resources": [{**row, "amount": float(row["amount"]), "original_amount": float(row["original_amount"]) if row["original_amount"] is not None else None} for row in resource_rows],
         "service_count": service_count,
         "estimated": estimated,
         "infrastructure_options": [row["value"] for row in option_rows],

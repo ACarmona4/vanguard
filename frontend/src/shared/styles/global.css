@@ -1720,53 +1720,11 @@ pre {
   .cost-source-form .notification { grid-column: 1; }
 }
 
-/* Infrastructure advisor shares dashboard surfaces and theme tokens. */
-.recommendation-overview { margin: 28px 0; }
-.recommendation-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.recommendation-preview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
-.recommendation-filters { margin-top: 26px; }
-.recommendation-context { font-size: 11px; line-height: 1.7; margin: 18px 0; }
-.finding-list { display: grid; gap: 16px; }
-.finding-card { min-width: 0; padding: 22px; border: 1px solid var(--border); border-left: 3px solid #94a3b8; border-radius: 10px; background: var(--surface); overflow-wrap: anywhere; }
-.finding-critical { border-left-color: #dc2626; }
-.finding-warning { border-left-color: #d97706; }
-.finding-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-.finding-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted); font-size: 10px; text-transform: capitalize; }
-.finding-severity { border-radius: 5px; padding: 4px 7px; font-weight: 600; background: var(--surface-subtle); }
-.finding-severity.critical { color: #b91c1c; background: #fef2f2; }
-.finding-severity.warning { color: #92400e; background: #fffbeb; }
-.finding-card h3 { font-size: 16px; margin: 16px 0 9px; }
-.finding-card p { color: var(--muted); font-size: 12px; line-height: 1.8; margin-top: 10px; }
-.finding-card .finding-resource { font-size: 10px; }
-.finding-resource strong { color: var(--text); }
-.finding-evidence { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; padding: 18px 0; margin-top: 16px; border-block: 1px solid var(--border); }
-.finding-evidence > div { display: flex; flex-direction: column; gap: 8px; }
-.finding-evidence span { color: var(--muted); font-size: 10px; }
-.finding-evidence strong { font-size: 12px; font-weight: 600; }
-.finding-card details { margin-top: 18px; }
-.finding-card summary, .recommendation-methodology summary { cursor: pointer; font-size: 12px; font-weight: 600; }
-.finding-card ol { padding-left: 20px; font-size: 12px; line-height: 1.8; margin: 14px 0; }
-.finding-card details a { display: inline-flex; align-items: center; gap: 6px; text-decoration: underline; font-size: 11px; margin-top: 14px; }
-.recommendation-methodology { margin-top: 28px; }
-.recommendation-methodology p, .recommendation-methodology li { color: var(--muted); font-size: 12px; line-height: 1.8; margin-top: 14px; }
-.recommendation-methodology ul { padding-left: 18px; }
-.recommendation-methodology a { text-decoration: underline; }
-:root[data-theme="dark"] .finding-severity.critical { color: #fca5a5; background: #450a0a; }
-:root[data-theme="dark"] .finding-severity.warning { color: #fcd34d; background: #422006; }
-@media (max-width: 1100px) {
-  .recommendation-metrics, .finding-evidence { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .recommendation-preview { grid-template-columns: 1fr; }
-}
 @media (max-width: 800px) {
   .topbar { height: auto; min-height: 56px; flex-wrap: wrap; padding-block: 12px; gap: 10px; }
   .topbar .mobile-nav { order: 3; flex-basis: 100%; overflow-x: auto; flex-wrap: nowrap; }
   .mobile-nav a { white-space: nowrap; }
 }
-@media (max-width: 480px) {
-  .recommendation-metrics, .finding-evidence { grid-template-columns: 1fr; }
-  .finding-card { padding: 16px; }
-}
-
 /* Organization membership */
 .organization-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
 .organization-grid h2 { font-size: 18px; }
@@ -1784,36 +1742,6 @@ pre {
 .workspace small a { text-decoration: underline; }
 @media (max-width: 1000px) { .organization-grid { grid-template-columns: 1fr; } }
 
-.recommendation-filters { flex-wrap: wrap; }
-.finding-priority { color: var(--text); font-weight: 600; }
-.recommendation-workflow { padding-top: 16px; border-top: 1px solid var(--border); }
-.recommendation-workflow-form { margin-top: 18px; display: grid; gap: 16px; }
-.recommendation-workflow-form label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--muted); }
-.recommendation-workflow-form textarea, .recommendation-workflow-form select { width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 10px; background: var(--surface); color: var(--text); font: inherit; }
-.recommendation-workflow-form textarea { min-height: 90px; resize: vertical; }
-.recommendation-criteria { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.recommendation-workflow-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .connection-confirm { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-subtle); font-size: 12px; }
 .connection-confirm p { margin: 8px 0 12px; color: var(--muted); line-height: 1.6; }
 .connection-confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.recommendation-timeline { margin-top: 20px; padding-left: 22px; font-size: 12px; }
-.recommendation-timeline > li { border-left: 2px solid var(--border); margin: 12px 0; padding: 8px 12px; }
-@media (max-width: 600px) {
-  .recommendation-criteria { grid-template-columns: 1fr; }
-}
-
-.recommendation-tabs { display: flex; gap: 4px; margin: 18px 0 4px; border-bottom: 1px solid var(--border); }
-.recommendation-tabs button { display: inline-flex; align-items: center; gap: 6px; margin-bottom: -1px; padding: 9px 14px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
-.recommendation-tabs button.active { border-bottom-color: #6366f1; color: inherit; font-weight: 600; }
-.recommendation-tab-count { min-width: 18px; padding: 1px 6px; border-radius: 9px; background: var(--surface-subtle); font-size: 10px; text-align: center; }
-
-.finding-cost { margin-top: 4px; }
-.finding-cost .finding-evidence { margin-top: 0; border-top: 0; }
-.finding-cost ul { padding-left: 20px; font-size: 12px; line-height: 1.8; }
-
-.recommendation-section { margin-top: 18px; padding-top: 4px; border-top: 1px solid var(--border); }
-.recommendation-section-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; padding: 12px 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.recommendation-section-title { font-size: 15px; font-weight: 600; }
-.recommendation-section-description { flex-basis: 100%; padding-left: 24px; font-size: 11px; }
-.recommendation-section .finding-list { margin-top: 6px; }
-.recommendation-section-more { margin-top: 14px; }

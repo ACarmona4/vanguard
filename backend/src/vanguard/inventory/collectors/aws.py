@@ -312,18 +312,26 @@ class AWSCollector:
             name = bucket["Name"]
             # An empty LocationConstraint means us-east-1.
             region = _optional(lambda name=name: client.get_bucket_location(Bucket=name).get("LocationConstraint")) or "us-east-1"
-            lifecycle = _optional(lambda name=name: client.get_bucket_lifecycle_configuration(Bucket=name).get("Rules"), [])
+            def read_lifecycle(name=name):
+                from botocore.exceptions import ClientError
+                try:
+                    return client.get_bucket_lifecycle_configuration(Bucket=name).get("Rules", [])
+                except ClientError as exc:
+                    if exc.response.get("Error", {}).get("Code") == "NoSuchLifecycleConfiguration":
+                        return []
+                    raise
+            lifecycle = _optional(read_lifecycle)
             versioning = _optional(lambda name=name: client.get_bucket_versioning(Bucket=name).get("Status"))
             tags = _optional(lambda name=name: client.get_bucket_tagging(Bucket=name).get("TagSet"), [])
             tiering = _optional(lambda name=name: client.list_bucket_intelligent_tiering_configurations(
-                Bucket=name).get("IntelligentTieringConfigurationList"), [])
+                Bucket=name).get("IntelligentTieringConfigurationList", []))
             resources.append(self._resource(
                 "s3_bucket", name, region=region, name=name,
                 attributes={
-                    "lifecycle_rules": len(lifecycle or []),
+                    "lifecycle_rules": len(lifecycle) if lifecycle is not None else None,
                     "aborts_incomplete_uploads": any("AbortIncompleteMultipartUpload" in rule for rule in lifecycle or []),
                     "versioning": versioning == "Enabled",
-                    "intelligent_tiering": bool(tiering),
+                    "intelligent_tiering": bool(tiering) if tiering is not None else None,
                     "created_at": bucket["CreationDate"].isoformat() if bucket.get("CreationDate") else None,
                     "tags": _tags(tags),
                 },

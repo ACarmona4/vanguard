@@ -15,7 +15,8 @@ export function useCosts(filters) {
       let nextDelay = 300_000;
       try {
         const data = await apiRequest(`costs?${query}`, { signal: controller.signal });
-        if (data.sources?.some((source) => ["ready", "syncing"].includes(source.status))) {
+        if (data.sources?.some((source) => ["ready", "syncing"].includes(source.status)) ||
+            (!data.conversion?.updated_at && data.conversion?.status === "partial")) {
           nextDelay = 5000;
         }
         if (!controller.signal.aborted) setState({ data, error: "", loading: false });

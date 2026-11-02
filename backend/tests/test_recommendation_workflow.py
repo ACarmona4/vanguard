@@ -452,7 +452,7 @@ class RecommendationWorkflowTests(unittest.TestCase):
         self.assertEqual(detail["events"][-1]["note"], "The resource is no longer in the inventory.")
         self.assertEqual(self.client.get("/api/recommendations").json()["items"], [])
 
-    def test_billing_suggests_cost_impact_until_a_person_assesses_it(self):
+    def test_cost_impact_requires_a_person_assessment(self):
         cost = {"status": "attributed", "source": "gcp_billing_export", "granularity": "resource",
                 "currency": "USD", "period_start": "2026-10-01", "period_end": "2026-10-20", "days_covered": 20,
                 "observed_amount": 40.0, "daily_average": 2.0, "monthly_cost": 60.0, "reason": None,
@@ -462,8 +462,8 @@ class RecommendationWorkflowTests(unittest.TestCase):
                    "items": [{**self.finding, "cost": cost}]})
         finding = self.detail()["finding"]
         self.assertEqual(finding["cost"]["savings"]["monthly_amount"], 60.0)
-        self.assertEqual(finding["economic_impact"], "high")
-        self.assertIn("Estimated savings: 60.00 USD/month (high confidence)", finding["priority_reason"])
+        self.assertEqual(finding["economic_impact"], "unknown")
+        self.assertNotIn("Estimated savings", finding["priority_reason"])
         listed = self.client.get("/api/recommendations").json()["items"][0]
         self.assertEqual(listed["cost"]["currency"], "USD")
 
@@ -650,3 +650,49 @@ class RecommendationWorkflowTests(unittest.TestCase):
             ).fetchone()["count"],
             105,
         )
+
+    def test_paas_billing_detection_approval_execution_and_verification(self):
+        from datetime import date
+
+        from vanguard.costs import repository as costs
+        from vanguard.costs.collectors import _base_record
+        from vanguard.recommendations.analysis import evaluate_inventory
+
+        cloud = self.connection.execute("SELECT * FROM cloud_connections WHERE id = %s", (self.cloud_id,)).fetchone()
+        costs.ensure_source(self.connection, cloud)
+        self.connection.commit()
+        bucket = Resource(provider="gcp", resource_type="storage_bucket", resource_id="paas-archive", name="Archive",
+                          scope_id="project-a", region="us-central1", attributes={"lifecycle_rules": 0, "autoclass": False})
+        database.save_resources(self.url, [bucket], owner_id=str(self.organization_id), connection_id=str(self.cloud_id))
+        billing_source = {"owner_id": self.organization_id, "connection_id": self.cloud_id, "provider": "gcp", "scope_id": "project-a"}
+        day = date.today() - timedelta(days=1)
+        costs.save_records(self.connection, source=billing_source, records=[
+            _base_record(billing_source, day, "Cloud Storage", 12, "USD"),
+            _base_record(billing_source, day, "Cloud Storage", 12, "USD", level="resource", resource_id="//storage.googleapis.com/projects/_/buckets/paas-archive"),
+        ], start=day, end=day+timedelta(days=1), detail_available=True)
+        with patch("vanguard.recommendations.analysis.query_series", return_value=[]), patch("vanguard.recommendations.analysis.query_history", return_value=[]):
+            report = evaluate_inventory(self.connection, str(self.organization_id))
+        self.save(report)
+        self.finding_id = self.connection.execute(
+            "SELECT id FROM recommendation_findings WHERE organization_id = %s AND finding->>'rule' = 'bucket_lifecycle'",
+            (self.organization_id,),
+        ).fetchone()["id"]
+        finding = self.detail()["finding"]
+        self.assertEqual(finding["cost"]["observed_amount"], 12)
+        self.assertIsNone(finding["cost"]["savings"])
+        page = self.client.get("/api/costs").json()
+        self.assertEqual(page["totals"][0]["amount"], 12)  # resource lines are not counted twice
+        self.assertEqual(page["top_resources"][0]["resource_name"], "Archive")
+        self.assertIsNotNone(page["top_resources"][0]["inventory_id"])
+        self.assertEqual(self.decide("approve").status_code, 200)
+        self.assertEqual(self.decide("execute").status_code, 200)
+        bucket.attributes["lifecycle_rules"] = 1
+        database.save_resources(self.url, [bucket], owner_id=str(self.organization_id), connection_id=str(self.cloud_id))
+        with patch("vanguard.recommendations.analysis.query_series", return_value=[]), patch("vanguard.recommendations.analysis.query_history", return_value=[]):
+            self.save(evaluate_inventory(self.connection, str(self.organization_id)))
+        detail = self.detail()
+        self.assertFalse(detail["finding"]["is_current"])
+        self.assertEqual([event["event_type"] for event in detail["events"]], ["detected", "approved", "executed", "condition_cleared"])
+        self.login(self.member, own_company=True)
+        self.assertEqual(self.client.get(f"/api/recommendations/{self.finding_id}").status_code, 404)
+        self.assertEqual(self.client.get("/api/costs").json()["top_resources"], [])

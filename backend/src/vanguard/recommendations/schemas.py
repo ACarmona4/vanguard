@@ -51,6 +51,9 @@ class Evidence(BaseModel):
 
 class Savings(BaseModel):
     monthly_amount: float
+    annual_amount: float | None = None
+    method: str = "resource_removal"
+    currency: str = "USD"
     formula: str
     confidence: Literal["high", "medium", "low"]
     assumptions: list[str]
@@ -67,6 +70,7 @@ class CostAssessment(BaseModel):
     observed_amount: float | None = None
     daily_average: float | None = None
     monthly_cost: float | None = None
+    billing_components: list[str] = Field(default_factory=list)
     savings: Savings | None = None
     reason: str | None = None
 
@@ -116,6 +120,7 @@ class WorkflowEvent(BaseModel):
         "approved",
         "executed",
         "rejected",
+        "estimated",
     ]
     actor_id: UUID | None
     actor_name: str

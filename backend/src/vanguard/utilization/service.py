@@ -26,11 +26,16 @@ def query_series(resources, minutes=30):
     if len(owner_ids) != 1 or not next(iter(owner_ids)):
         raise ValueError("Metrics require one organization")
     selectors.append(f"owner_id={json.dumps(owner_ids.pop())}")
+    resources = [resource for resource in resources if metrics_for(resource)]
+    if not resources:
+        return []
+    metadata_only = all(not metric.cloud_name for resource in resources for metric in metrics_for(resource))
     for index, label in enumerate(IDENTITY_LABELS[1:], start=1):
         values = {identity(resource)[index] for resource in resources}
         if len(values) == 1:
             selectors.append(f"{label}={json.dumps(values.pop())}")
-    query = "{" + ",".join(selectors) + "}[" + str(minutes) + "m]"
+    lookback = max([minutes, *(metric.freshness_seconds // 60 + 5 for resource in resources for metric in metrics_for(resource))])
+    query = "{" + ",".join(selectors) + "}[" + str(lookback) + "m]"
     base = os.getenv("VANGUARD_PROMETHEUS_URL", "http://127.0.0.1:9090").rstrip("/")
     try:
         with urlopen(base + "/api/v1/query?" + urlencode({"query": query, "timeout": "8s"}), timeout=10) as response:
@@ -39,6 +44,8 @@ def query_series(resources, minutes=30):
             raise ValueError("Invalid metric response")
         return body["data"]["result"]
     except Exception as exc:
+        if metadata_only:
+            return []  # Current inventory gauges remain useful while their history is unavailable.
         raise MetricsUnavailable("Prometheus is unavailable. Start the observability service.") from exc
 
 
@@ -65,19 +72,25 @@ def indexed_series(series):
 def describe(resources, series, *, history=False, now=None):
     now = now if now is not None else time.time()
     indexed = indexed_series(series)
+    from .cloud import metadata_samples
+    for resource, definition, timestamp, value in metadata_samples(resources):
+        indexed.setdefault((identity(resource), definition.key), {})[timestamp] = value
     result = []
     for resource in resources:
         metrics = []
         for definition in metrics_for(resource):
             points = sorted(indexed.get((identity(resource), definition.key), {}).items())
             latest = points[-1] if points else None
-            fresh = latest is not None and 0 <= now - latest[0] <= FRESH_SECONDS
+            fresh = latest is not None and 0 <= now - latest[0] <= definition.freshness_seconds
             metrics.append({
                 "key": definition.key, "label": definition.label, "unit": definition.unit,
                 "value": latest[1] if fresh else None,
                 "last_value": latest[1] if latest else None,
                 "observed_at": datetime.fromtimestamp(latest[0], timezone.utc).isoformat() if latest else None,
                 "status": "ok" if fresh else "stale" if latest else "no_data",
+                "source": "inventory" if definition.attribute else "cloud_monitoring",
+                "activity": definition.activity,
+                "freshness_seconds": definition.freshness_seconds,
                 "points": [[timestamp * 1000, value] for timestamp, value in points] if history else [],
             })
         result.append({**{key: resource.get(key) for key in ("id", "name", *IDENTITY_LABELS)}, "metrics": metrics})

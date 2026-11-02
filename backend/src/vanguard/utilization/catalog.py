@@ -15,6 +15,12 @@ class Metric:
     optional: bool = False
     # Published only while the resource has traffic; an idle resource reports nothing.
     activity: bool = False
+    reducer: str = "sum"
+    filter: str = ""
+    freshness_seconds: int = 1200
+    period: int = 300
+    dimensions: tuple[tuple[str, str], ...] = ()
+    attribute: str = ""
 
 
 CPU = Metric("cpu_percent", "CPU", "%", "CPUUtilization")
@@ -40,6 +46,8 @@ AWS = {
         # Reported only for provisioned tables; on-demand tables have no reserved capacity.
         Metric("provisioned_read_units", "Provisioned reads", "units/s", "ProvisionedReadCapacityUnits", optional=True),
         Metric("provisioned_write_units", "Provisioned writes", "units/s", "ProvisionedWriteCapacityUnits", optional=True),
+        Metric("read_throttles_per_second", "Throttled reads", "requests/s", "ReadThrottleEvents", "Sum", 1 / 300, activity=True),
+        Metric("write_throttles_per_second", "Throttled writes", "requests/s", "WriteThrottleEvents", "Sum", 1 / 300, activity=True),
     )),
     "sqs_queue": ("AWS/SQS", "QueueName", (
         Metric("queued_messages", "Pending messages", "messages", "ApproximateNumberOfMessagesVisible", activity=True),
@@ -56,6 +64,21 @@ AWS = {
         Metric("free_storage_bytes", "Free storage", "B", "FreeStorageSpace", optional=True),
         Metric("read_iops", "Read IOPS", "operations/s", "ReadIOPS", optional=True),
         Metric("write_iops", "Write IOPS", "operations/s", "WriteIOPS", optional=True),
+        Metric("filesystem_percent", "Allocated storage used", "%", optional=True),
+    )),
+    "rds_cluster": ("AWS/RDS", "DBClusterIdentifier", (
+        Metric("storage_bytes", "Cluster storage used", "B", "VolumeBytesUsed", optional=True),
+        Metric("capacity_units", "Serverless capacity", "ACU", "ServerlessDatabaseCapacity", optional=True),
+        Metric("capacity_percent", "Serverless capacity utilization", "%", "ACUUtilization", "Maximum", optional=True),
+    )),
+    "rds_snapshot": ("", "", (
+        Metric("allocated_storage_gb", "Source allocated storage (not snapshot size)", "GB", attribute="allocated_storage_gb", optional=True),
+    )),
+    "s3_bucket": ("AWS/S3", "BucketName", (
+        Metric("storage_bytes", "Standard storage (daily)", "B", "BucketSizeBytes", optional=True,
+               period=86400, freshness_seconds=172800, dimensions=(("StorageType", "StandardStorage"),)),
+        Metric("objects", "Objects (daily)", "objects", "NumberOfObjects", optional=True,
+               period=86400, freshness_seconds=172800, dimensions=(("StorageType", "AllStorageTypes"),)),
     )),
     # Serverless functions report only while invoked, so every metric is an activity metric.
     "lambda_function": ("AWS/Lambda", "FunctionName", (
@@ -64,6 +87,9 @@ AWS = {
         Metric("throttles_per_second", "Throttles", "requests/s", "Throttles", "Sum", 1 / 300, activity=True),
         Metric("duration_ms", "Duration", "ms", "Duration", activity=True),
         Metric("concurrent_executions", "Concurrent executions", "executions", "ConcurrentExecutions", "Maximum", activity=True),
+        Metric("duration_p95_ms", "Duration p95", "ms", "Duration", "p95", activity=True),
+        Metric("provisioned_concurrency", "Allocated provisioned concurrency", "executions",
+               attribute="provisioned_concurrency", activity=True, optional=True),
     )),
     "sns_topic": ("AWS/SNS", "TopicName", (
         Metric("published_per_second", "Published messages", "messages/s", "NumberOfMessagesPublished", "Sum", 1 / 300, activity=True),
@@ -91,10 +117,33 @@ GCP = {
         Metric("instances", "Instances", "instances", "run.googleapis.com/container/instance_count", activity=True),
         Metric("billable_instance_seconds", "Billable instance time", "s/s",
                "run.googleapis.com/container/billable_instance_time", "rate", activity=True),
+        Metric("cpu_percent", "CPU p95 (worst revision)", "%", "run.googleapis.com/container/cpu/utilizations", "p95", 100, activity=True, reducer="max"),
+        Metric("memory_percent", "Memory p95 (worst revision)", "%", "run.googleapis.com/container/memory/utilizations", "p95", 100, activity=True, reducer="max"),
+        Metric("duration_p95_ms", "Request latency p95 (worst revision)", "ms", "run.googleapis.com/request_latencies", "p95", activity=True, reducer="max"),
+        Metric("errors_per_second", "Server errors", "requests/s", "run.googleapis.com/request_count", "rate", activity=True,
+               filter='metric.labels.response_code_class = "5xx"'),
     )),
     "cloud_function": ("cloud_function", "function_name", (
         Metric("invocations_per_second", "Invocations", "requests/s",
                "cloudfunctions.googleapis.com/function/execution_count", "rate", activity=True),
+        Metric("duration_p95_ms", "Execution time p95", "ms", "cloudfunctions.googleapis.com/function/execution_times", "p95", 1 / 1_000_000, activity=True, reducer="max"),
+        Metric("errors_per_second", "Failed executions", "requests/s", "cloudfunctions.googleapis.com/function/execution_count", "rate", activity=True,
+               filter='metric.labels.status != "ok"'),
+    )),
+    "storage_bucket": ("gcs_bucket", "bucket_name", (
+        Metric("storage_bytes", "Stored bytes (daily measurement)", "B", "storage.googleapis.com/storage/total_bytes", optional=True),
+        Metric("objects", "Objects (daily measurement)", "objects", "storage.googleapis.com/storage/object_count", optional=True),
+        Metric("requests_per_second", "Requests", "requests/s", "storage.googleapis.com/api/request_count", "rate", activity=True),
+    )),
+    "bigquery_dataset": ("bigquery_dataset", "dataset_id", (
+        Metric("storage_bytes", "Logical bytes stored", "B", "bigquery.googleapis.com/storage/stored_bytes", optional=True, freshness_seconds=14400),
+        Metric("tables", "Tables", "tables", "bigquery.googleapis.com/storage/table_count", optional=True, freshness_seconds=14400),
+    )),
+    "bigquery_table": ("", "", (
+        Metric("storage_bytes", "Logical bytes (metadata)", "B", attribute="size_bytes", optional=True),
+        Metric("rows", "Rows (metadata)", "rows", attribute="rows", optional=True),
+        Metric("queries_7d", "Queries referencing table (7 days)", "queries", attribute="queries_7d", optional=True),
+        Metric("bytes_billed_7d", "Query bytes billed (shared across referenced tables)", "B", attribute="bytes_billed_7d", optional=True),
     )),
     "pubsub_topic": ("pubsub_topic", "topic_id", (
         Metric("retained_bytes", "Retained messages", "B", "pubsub.googleapis.com/topic/retained_bytes"),
@@ -115,10 +164,18 @@ def metrics_for(resource: dict) -> tuple[Metric, ...]:
     if not entry:
         return ()
     metrics = entry[2]
+    attributes = resource.get("attributes") or {}
+    if resource["resource_type"] == "cloud_function" and attributes.get("generation") == "GEN_2":
+        return GCP["cloud_run_service"][2] if attributes.get("run_service") else ()
+    if resource["resource_type"] == "rds_instance" and (attributes.get("cluster") or "aurora" in (attributes.get("engine") or "")):
+        metrics = tuple(metric for metric in metrics if metric.key not in {"free_storage_bytes", "filesystem_percent"})
     if resource["resource_type"] == "cloudsql_instance":
-        version = resource.get("attributes", {}).get("database_version") or ""
-        if not version.startswith("POSTGRES"):
-            metrics = tuple(metric for metric in metrics if metric.key != "connections")
+        from dataclasses import replace
+        version = attributes.get("database_version") or ""
+        connection_metric = ("postgresql/num_backends" if version.startswith("POSTGRES") else
+                             "network/connections" if version.startswith("MYSQL") else None)
+        metrics = tuple(replace(metric, label="Database connections", cloud_name="cloudsql.googleapis.com/database/" + connection_metric)
+                        if metric.key == "connections" else metric for metric in metrics if metric.key != "connections" or connection_metric)
     return metrics
 
 

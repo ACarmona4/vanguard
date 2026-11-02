@@ -93,38 +93,51 @@ def collect_aws(source: dict, credentials: dict, start: date, end: date):
         "TimePeriod": {"Start": detail_start.isoformat(), "End": query_end.isoformat()},
         "Granularity": "DAILY",
         "Metrics": [AWS_COST_METRIC],
-        "Filter": {"And": [
-            {"Dimensions": {"Key": "SERVICE", "Values": ["Amazon Elastic Compute Cloud - Compute"]}},
-            AWS_USAGE_FILTER,
-        ]},
-        "GroupBy": [{"Type": "DIMENSION", "Key": "RESOURCE_ID"}],
+        "Filter": AWS_USAGE_FILTER,
+        "GroupBy": [{"Type": "DIMENSION", "Key": "SERVICE"}, {"Type": "DIMENSION", "Key": "RESOURCE_ID"}],
     }
-    try:
+    def resource_records(request, *, legacy=False):
+        details = []
         while True:
-            response = client.get_cost_and_usage_with_resources(**detail_request)
-            detail_available = True
+            response = client.get_cost_and_usage_with_resources(**request)
             for period in response.get("ResultsByTime", []):
                 day = date.fromisoformat(period["TimePeriod"]["Start"])
                 for group in period.get("Groups", []):
-                    resource_id = group["Keys"][0]
+                    service, resource_id = (("Amazon Elastic Compute Cloud - Compute", group["Keys"][0])
+                                            if legacy else group["Keys"])
                     if not resource_id:
                         continue
                     metric = group["Metrics"][AWS_COST_METRIC]
-                    records.append(_base_record(
-                        source, day, "Amazon Elastic Compute Cloud - Compute",
-                        metric["Amount"], metric["Unit"], level="resource",
+                    details.append(_base_record(
+                        source, day, service, metric["Amount"], metric["Unit"], level="resource",
                         resource_id=resource_id, estimated=period.get("Estimated", False),
                     ))
             token = response.get("NextPageToken")
             if not token:
-                break
-            detail_request["NextPageToken"] = token
-    except ClientError as exc:
-        if exc.response.get("Error", {}).get("Code") not in {
-            "DataUnavailableException", "ValidationException", "AccessDeniedException"
-        }:
-            raise
-        detail_available = False
+                return details
+            request["NextPageToken"] = token
+
+    allowed = {"DataUnavailableException", "ValidationException", "AccessDeniedException", "AccessDenied"}
+    if detail_start < query_end:
+        try:
+            records.extend(resource_records(detail_request.copy()))
+            detail_available = True
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code")
+            if code not in allowed:
+                raise
+            # Some billing APIs retain the legacy EC2-only filter requirement.
+            # Keep that detail and service totals when multi-service detail is rejected.
+            if code == "ValidationException":
+                legacy = {**detail_request, "GroupBy": [{"Type": "DIMENSION", "Key": "RESOURCE_ID"}],
+                          "Filter": {"And": [AWS_USAGE_FILTER, {"Dimensions": {
+                              "Key": "SERVICE", "Values": ["Amazon Elastic Compute Cloud - Compute"]}}]}}
+                try:
+                    records.extend(resource_records(legacy, legacy=True))
+                    detail_available = True
+                except ClientError as fallback:
+                    if fallback.response.get("Error", {}).get("Code") not in allowed:
+                        raise
     return records, detail_available
 
 

@@ -25,6 +25,9 @@ class Policy:
     # Suggested impact from monthly savings, in the billing account currency.
     savings_high: float = 50
     savings_medium: float = 10
+    low_capacity_percent: float = 20
+    snapshot_review_days: int = 30
+    bigquery_large_table_bytes: int = 1024**3
 
 
 DEFAULT_POLICY = Policy()

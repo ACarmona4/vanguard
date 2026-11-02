@@ -5,6 +5,7 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import Mock
 
+from botocore.exceptions import ClientError
 from vanguard.inventory.collectors.aws import AWSCollector
 
 
@@ -86,7 +87,7 @@ class AWSManagedServiceTests(unittest.TestCase):
         s3.get_bucket_lifecycle_configuration.side_effect = [
             {"Rules": [{"ID": "expire", "Expiration": {"Days": 90}},
                        {"ID": "uploads", "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}}]},
-            _Denied("NoSuchLifecycleConfiguration"),
+            ClientError({"Error": {"Code": "NoSuchLifecycleConfiguration"}}, "GetBucketLifecycleConfiguration"),
         ]
         s3.get_bucket_versioning.return_value = {"Status": "Enabled"}
         s3.get_bucket_tagging.side_effect = _Denied("NoSuchTagSet")

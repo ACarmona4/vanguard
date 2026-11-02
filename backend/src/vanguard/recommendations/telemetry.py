@@ -20,6 +20,8 @@ HISTORY_METRICS = (
     "freeable_memory_bytes", "free_storage_bytes",
     # Serverless traffic: Lambda and Cloud Functions invocations, Cloud Run requests.
     "invocations_per_second", "requests_per_second",
+    "provisioned_read_units", "provisioned_write_units", "read_throttles_per_second", "write_throttles_per_second",
+    "errors_per_second", "throttles_per_second", "duration_p95_ms", "capacity_percent",
 )
 
 
@@ -40,7 +42,8 @@ def query_history(resources, *, now=None, policy=DEFAULT_POLICY):
     for metric in HISTORY_METRICS:
         name = "vanguard_" + metric
         selector = "{" + ",".join([f"__name__={json.dumps(name)}", *labels]) + "}"
-        peaks = f"max_over_time({selector}[1h]) and (count_over_time({selector}[1h]) >= 6)"
+        aggregate = "min_over_time" if metric.startswith("provisioned_") else "max_over_time"
+        peaks = f"{aggregate}({selector}[1h]) and (count_over_time({selector}[1h]) >= 6)"
         # Range functions drop __name__. Restore it per metric before the union,
         # otherwise CPU and network with the same resource labels collide.
         expressions.append(f'label_replace(({peaks}), "__name__", "{name}", "", "")')

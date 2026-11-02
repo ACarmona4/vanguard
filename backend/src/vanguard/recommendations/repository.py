@@ -6,7 +6,6 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from ..inventory.taxonomy import resource_types_for
-from .economics import suggested_impact
 from .priority import assess
 from .schemas import StoredFinding
 
@@ -56,6 +55,10 @@ CREATE TABLE IF NOT EXISTS recommendation_events (
 );
 CREATE INDEX IF NOT EXISTS recommendation_event_history_idx
     ON recommendation_events (organization_id, finding_id, id);
+ALTER TABLE recommendation_findings ADD COLUMN IF NOT EXISTS savings_scenario JSONB;
+ALTER TABLE recommendation_events DROP CONSTRAINT IF EXISTS recommendation_events_event_type_check;
+ALTER TABLE recommendation_events ADD CONSTRAINT recommendation_events_event_type_check CHECK
+    (event_type IN ('detected', 'condition_cleared', 'prioritized', 'approved', 'executed', 'rejected', 'estimated'));
 """
 
 
@@ -64,11 +67,13 @@ class Conflict(ValueError):
 
 
 def ensure_schema(connection):
+    from .tickets import SCHEMA_SQL as TICKET_SCHEMA
     connection.execute(SCHEMA_SQL)
+    connection.execute(TICKET_SCHEMA)
 
 
 def public_finding(row):
-    return {
+    result = {
         **row["finding"],
         **{
             key: value
@@ -77,6 +82,8 @@ def public_finding(row):
         },
     }
 
+    result.pop("savings_scenario", None)
+    return result
 
 def _event(connection, row, event_type, note, actor=None):
     connection.execute(
@@ -146,7 +153,7 @@ def save_evaluation(connection, organization_id, report):
         key = finding["id"]
         seen.add(key)
         current = existing.get(key)
-        suggested = suggested_impact(finding.get("cost")) or "unknown"
+        suggested = "unknown"
         if current and current["id"] in assessed_by_people:
             impact = current["economic_impact"]
         else:
@@ -394,4 +401,7 @@ def change(
         ).fetchone()
         event_type = target
     _event(connection, row, event_type, payload.note, actor)
+    if not prioritize:
+        from .tickets import sync_decision
+        sync_decision(connection, row, actor, event_type, payload.note)
     return public_finding(row)

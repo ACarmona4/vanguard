@@ -19,6 +19,7 @@ class HistoryHours(IntEnum):
     hour = 1
     six_hours = 6
     day = 24
+    week = 168
 
 
 class MetricReading(BaseModel):
@@ -30,6 +31,9 @@ class MetricReading(BaseModel):
     observed_at: datetime | None
     status: Literal["ok", "stale", "no_data"]
     points: list[tuple[float, float]]
+    source: Literal["inventory", "cloud_monitoring"] = "cloud_monitoring"
+    activity: bool = False
+    freshness_seconds: int = 1200
 
 
 class ResourceUtilization(BaseModel):

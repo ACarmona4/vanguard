@@ -10,11 +10,28 @@ variable "provider_name" { type = string }
 variable "deployment_id" { type = string }
 variable "region" { type = string }
 variable "gcp_project_id" { type = string }
+variable "aws_ami_id" {
+  type     = string
+  default  = null
+  nullable = true
+}
+variable "aws_lambda_role_arn" {
+  type     = string
+  default  = null
+  nullable = true
+}
+
 
 locals {
   aws  = var.provider_name == "aws"
   gcp  = var.provider_name == "gcp"
   name = "vanguard-${var.deployment_id}"
+  paas_tags = {
+    ManagedBy  = "vanguard"
+    Disposable = "true"
+    Purpose    = "paas-lab"
+    Deployment = var.deployment_id
+  }
 }
 
 provider "aws" { region = local.aws ? var.region : "us-east-1" }
@@ -74,7 +91,7 @@ resource "aws_security_group" "lab" {
 
 resource "aws_instance" "lab" {
   count                       = local.aws ? 1 : 0
-  ami                         = data.aws_ami.linux[0].id
+  ami                         = coalesce(var.aws_ami_id, data.aws_ami.linux[0].id)
   instance_type               = "t3.micro"
   subnet_id                   = aws_subnet.lab[0].id
   vpc_security_group_ids      = [aws_security_group.lab[0].id]
@@ -99,6 +116,10 @@ resource "aws_dynamodb_table" "lab" {
   attribute {
     name = "id"
     type = "S"
+  }
+  ttl {
+    attribute_name = "lab_expires_at"
+    enabled        = true
   }
   tags = { Name = "${local.name}-database", ManagedBy = "vanguard", Disposable = "true" }
 }
@@ -217,4 +238,143 @@ output "resources" {
     vm       = tostring(google_compute_instance.lab[0].instance_id)
     database = google_sql_database_instance.lab[0].name
   }
+}
+
+# PaaS lab: uses the existing Academy LabRole; no IAM roles or policies are created.
+data "aws_caller_identity" "lab" {
+  count = local.aws ? 1 : 0
+}
+
+data "aws_partition" "lab" {
+  count = local.aws ? 1 : 0
+}
+
+resource "aws_sns_topic" "paas" {
+  count = local.aws ? 1 : 0
+  name  = "${local.name}-events"
+  tags  = local.paas_tags
+}
+
+resource "aws_sqs_queue" "paas_dlq" {
+  count                     = local.aws ? 1 : 0
+  name                      = "${local.name}-dead-letter"
+  message_retention_seconds = 86400
+  sqs_managed_sse_enabled   = true
+  tags                      = local.paas_tags
+}
+
+resource "aws_sqs_queue" "paas" {
+  count                      = local.aws ? 1 : 0
+  name                       = "${local.name}-messages"
+  message_retention_seconds  = 86400
+  visibility_timeout_seconds = 90
+  receive_wait_time_seconds  = 20
+  sqs_managed_sse_enabled    = true
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.paas_dlq[0].arn
+    maxReceiveCount     = 3
+  })
+  tags = local.paas_tags
+}
+
+resource "aws_sqs_queue_policy" "paas" {
+  count     = local.aws ? 1 : 0
+  queue_url = aws_sqs_queue.paas[0].url
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AllowLabTopicOnly"
+      Effect    = "Allow"
+      Principal = { Service = "sns.amazonaws.com" }
+      Action    = "sqs:SendMessage"
+      Resource  = aws_sqs_queue.paas[0].arn
+      Condition = { ArnEquals = { "aws:SourceArn" = aws_sns_topic.paas[0].arn } }
+    }]
+  })
+}
+
+resource "aws_sns_topic_subscription" "paas" {
+  count                = local.aws ? 1 : 0
+  topic_arn            = aws_sns_topic.paas[0].arn
+  protocol             = "sqs"
+  endpoint             = aws_sqs_queue.paas[0].arn
+  raw_message_delivery = true
+  depends_on           = [aws_sqs_queue_policy.paas]
+}
+
+resource "aws_cloudwatch_log_group" "paas" {
+  for_each          = local.aws ? toset(["producer", "consumer"]) : toset([])
+  name              = "/aws/lambda/${local.name}-${each.key}"
+  retention_in_days = 3
+  tags              = local.paas_tags
+}
+
+resource "aws_lambda_function" "paas" {
+  for_each         = local.aws ? toset(["producer", "consumer"]) : toset([])
+  function_name    = "${local.name}-${each.key}"
+  role             = coalesce(var.aws_lambda_role_arn, "arn:${data.aws_partition.lab[0].partition}:iam::${data.aws_caller_identity.lab[0].account_id}:role/LabRole")
+  runtime          = "python3.12"
+  handler          = "handler.${each.key}"
+  filename         = "${path.module}/lambda.zip"
+  source_code_hash = filebase64sha256("${path.module}/lambda.zip")
+  memory_size      = 128
+  timeout          = 10
+  architectures    = ["x86_64"]
+  environment {
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.lab[0].name
+      TOPIC_ARN  = aws_sns_topic.paas[0].arn
+    }
+  }
+  tags       = local.paas_tags
+  depends_on = [aws_cloudwatch_log_group.paas]
+}
+
+resource "aws_lambda_event_source_mapping" "paas" {
+  count                   = local.aws ? 1 : 0
+  event_source_arn        = aws_sqs_queue.paas[0].arn
+  function_name           = aws_lambda_function.paas["consumer"].arn
+  batch_size              = 5
+  function_response_types = ["ReportBatchItemFailures"]
+  scaling_config {
+    maximum_concurrency = 2
+  }
+}
+
+resource "aws_cloudwatch_event_rule" "paas" {
+  count               = local.aws ? 1 : 0
+  name                = "${local.name}-traffic"
+  description         = "Vanguard synthetic PaaS lab traffic every five minutes"
+  schedule_expression = "rate(5 minutes)"
+  tags                = local.paas_tags
+}
+
+resource "aws_lambda_permission" "paas_schedule" {
+  count         = local.aws ? 1 : 0
+  statement_id  = "AllowLabSchedule"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.paas["producer"].function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.paas[0].arn
+}
+
+resource "aws_cloudwatch_event_target" "paas" {
+  count      = local.aws ? 1 : 0
+  rule       = aws_cloudwatch_event_rule.paas[0].name
+  target_id  = "producer"
+  arn        = aws_lambda_function.paas["producer"].arn
+  input      = jsonencode({ source = "vanguard-paas-lab", scheduled = true })
+  depends_on = [aws_lambda_permission.paas_schedule, aws_sns_topic_subscription.paas]
+}
+
+output "paas" {
+  value = local.aws ? {
+    producer     = aws_lambda_function.paas["producer"].function_name
+    consumer     = aws_lambda_function.paas["consumer"].function_name
+    topic_arn    = aws_sns_topic.paas[0].arn
+    queue_url    = aws_sqs_queue.paas[0].url
+    dlq_url      = aws_sqs_queue.paas_dlq[0].url
+    table        = aws_dynamodb_table.lab[0].name
+    traffic_rule = aws_cloudwatch_event_rule.paas[0].name
+  } : {}
 }

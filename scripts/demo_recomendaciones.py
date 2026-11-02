@@ -38,6 +38,11 @@ HEALTHY = {
     "disk_queue": 0.5, "read_units_per_second": 12, "write_units_per_second": 4,
     "queued_messages": 20, "oldest_message_seconds": 15, "retained_bytes": 2 * MIB,
     "published_per_second": 3, "failed_per_second": 0,
+    "errors_per_second": 0, "throttles_per_second": 0,
+    "read_throttles_per_second": 0, "write_throttles_per_second": 0,
+    "provisioned_read_units": 100, "provisioned_write_units": 100,
+    "invocations_per_second": 1, "requests_per_second": 2,
+    "duration_ms": 100, "duration_p95_ms": 150, "capacity_percent": 30,
 }
 
 
@@ -102,7 +107,7 @@ def billing(item, days, daily, currency="USD"):
               if item["provider"] == "gcp" else item["resource_id"])
     return [{"owner": "demo", "connection_id": item["connection_id"], "provider": item["provider"], "resource_id": billed,
              "usage_date": TODAY - timedelta(days=day), "currency": currency, "amount": Decimal(str(daily))}
-            for day in range(days)]
+            for day in range(1, days + 1)]
 
 
 class _BillingTable:
@@ -311,6 +316,32 @@ def scenarios():
     add(g, "recurso_apagado", "EC2 detenida: se ignora aunque tenga métricas", vm,
         build(vm, {"cpu_percent": 6}), set())
 
+    # PaaS: inputs remain synthetic; rules, economic assessment and persistence are real.
+    g = "PaaS"
+    function = resource(60, "processor", "aws", "lambda_function", attributes={"timeout_seconds": 10})
+    add(g, "paas_lambda_errors", "Lambda con errores sostenidos", function,
+        build(function, {"errors_per_second": .02}), {"errors_per_second_high"})
+    function = resource(61, "slow-processor", "aws", "lambda_function", attributes={"timeout_seconds": 10})
+    add(g, "paas_lambda_timeout", "Lambda con p95 cerca del timeout", function,
+        build(function, {"duration_p95_ms": [8500]*RECENT_POINTS}), {"function_timeout_risk"})
+    run = resource(62, "idle-api", "gcp", "cloud_run_service", attributes={"min_instances": 2})
+    add(g, "paas_run_idle", "Cloud Run con mínimo de instancias y ceros observados durante una semana", run,
+        build(run, {"requests_per_second": 0}), {"serverless_idle_capacity"})
+    table = resource(63, "sessions", "aws", "dynamodb_table", attributes={"billing_mode": "PROVISIONED"})
+    add(g, "paas_dynamodb_capacity", "DynamoDB con capacidad provisionada poco utilizada", table,
+        build(table), {"dynamodb_read_capacity", "dynamodb_write_capacity"})
+    queue = resource(64, "short-poll", "aws", "sqs_queue", attributes={"long_polling_seconds": 0})
+    add(g, "paas_sqs_polling", "SQS con recepciones vacías y long polling deshabilitado", queue,
+        build(queue, {"empty_receives_per_second": 5}), {"sqs_short_polling"})
+    snapshot = resource(65, "manual-backup", "aws", "rds_snapshot", attributes={"created_at": datetime.fromtimestamp(NOW-45*86400, timezone.utc).isoformat()})
+    add(g, "paas_snapshot_retention", "Snapshot manual de 45 días requiere revisión", snapshot,
+        build(snapshot), {"snapshot_retention"})
+    bucket = resource(66, "archive", "gcp", "storage_bucket", attributes={"lifecycle_rules": 0, "autoclass": False})
+    add(g, "paas_bucket_lifecycle", "Cloud Storage sin ciclo de vida ni Autoclass", bucket,
+        build(bucket), {"bucket_lifecycle"})
+    table = resource(67, "analytics.events", "gcp", "bigquery_table", attributes={"table_type": "TABLE", "size_bytes": 2*1024**3, "partitioned": False, "queries_7d": 10})
+    add(g, "paas_bigquery_partitioning", "Tabla BigQuery grande y consultada sin particionamiento", table,
+        build(table), {"bigquery_partitioning"})
     return s
 
 
@@ -398,7 +429,8 @@ def main():
         results.append(show(x))
     print("─" * 82)
     print(f"\n{sum(results)}/{len(results)} escenarios se comportaron como se esperaba.")
+    return 0 if all(results) else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 
 from . import repository
+from .exchange_worker import exchange_rate_worker
 from .schemas import (
     CostOverview,
     CostQuery,
@@ -60,6 +61,7 @@ def create_router(database_dependency, write_database_dependency, user_dependenc
         background_tasks: BackgroundTasks,
         user: protected_user_dependency,
     ):
+        background_tasks.add_task(exchange_rate_worker.collect)
         background_tasks.add_task(cost_worker.collect, str(user["organization_id"]), True)
         return {"message": "Cost synchronization started"}
 

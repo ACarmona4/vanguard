@@ -60,6 +60,7 @@ from .core.security import (
 )
 from .costs import repository as cost_repository
 from .costs.api import create_router as costs_router
+from .costs.exchange_worker import exchange_rate_worker
 from .costs.worker import cost_worker
 from .inventory import repository
 from .inventory.database import ensure_schema as ensure_inventory_schema
@@ -80,6 +81,7 @@ from .organizations import repository as organizations
 from .organizations.api import create_router as organizations_router
 from .recommendations import repository as recommendation_repository
 from .recommendations.api import create_router as recommendations_router
+from .recommendations.tickets import create_router as tickets_router
 from .recommendations.worker import recommendation_worker
 from .utilization.api import create_router as utilization_router
 from .utilization.worker import metrics_worker
@@ -112,6 +114,7 @@ async def lifespan(_app: FastAPI):
         )
     metrics_task = asyncio.create_task(metrics_worker.run(), name="utilization-collector")
     costs_task = asyncio.create_task(cost_worker.run(), name="cost-collector")
+    exchange_task = asyncio.create_task(exchange_rate_worker.run(), name="daily-exchange-rate")
     recommendations_task = asyncio.create_task(recommendation_worker.run(), name="recommendation-engine")
     try:
         yield
@@ -119,6 +122,7 @@ async def lifespan(_app: FastAPI):
         await stop_scheduler(recommendations_task)
         await stop_scheduler(metrics_task)
         await stop_scheduler(costs_task)
+        await stop_scheduler(exchange_task)
         await stop_scheduler(task)
 
 
@@ -215,6 +219,7 @@ ReadAdminUser = Annotated[dict, Depends(require_read_admin)]
 OperatorUser = Annotated[dict, Depends(require_operator)]
 app.include_router(utilization_router(Database, CurrentUser))
 app.include_router(recommendations_router(Database, WriteDatabase, CurrentUser, OperatorUser))
+app.include_router(tickets_router(Database, WriteDatabase, CurrentUser, OperatorUser))
 app.include_router(costs_router(Database, WriteDatabase, CurrentUser, OperatorUser, AdminUser))
 app.include_router(organizations_router(Database, WriteDatabase, CurrentUser, ProtectedUser, AdminUser, ReadAdminUser))
 

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -98,6 +100,58 @@ def queue_deploy(connection, *, owner_id: str, connection_id: str, region: str) 
     return row
 
 
+class LabUpgradeConflict(RuntimeError):
+    pass
+
+
+def queue_upgrade(connection, *, owner_id: str, deployment_id: str) -> dict[str, Any] | None:
+    """Claim an existing AWS lab without changing its identity or persisted state."""
+    row = connection.execute(
+        f"""UPDATE lab_deployments SET status = 'queued', last_error = NULL, updated_at = NOW()
+        WHERE id = %s AND owner_id = %s AND provider = 'aws' AND status = 'active'
+          AND EXISTS (SELECT 1 FROM cloud_connections c WHERE c.id = lab_deployments.connection_id
+                      AND c.owner_id = lab_deployments.owner_id AND c.enabled)
+        RETURNING {PUBLIC_COLUMNS}""",
+        (deployment_id, owner_id),
+    ).fetchone()
+    connection.commit()
+    return row
+
+
+def stage_module(workdir: Path) -> None:
+    for filename in ("main.tf", ".terraform.lock.hcl"):
+        shutil.copy2(MODULE / filename, workdir / filename)
+    # Stable archive bytes avoid needless Lambda updates on every deploy/destroy.
+    info = zipfile.ZipInfo("handler.py", date_time=(2020, 1, 1, 0, 0, 0))
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.external_attr = 0o644 << 16
+    with zipfile.ZipFile(workdir / "lambda.zip", "w") as archive:
+        archive.writestr(info, (MODULE / "lambda_handler.py").read_bytes())
+
+
+def existing_lab_ami(state: dict | None) -> str | None:
+    """Pin the VM's actual image during an additive upgrade, despite most_recent data."""
+    for resource in (state or {}).get("resources", []):
+        if resource.get("type") != "aws_instance" or resource.get("name") != "lab":
+            continue
+        for instance in resource.get("instances", []):
+            if instance.get("index_key") not in (None, 0):
+                continue
+            ami = (instance.get("attributes") or {}).get("ami")
+            if isinstance(ami, str) and re.fullmatch(r"ami-[a-f0-9]+", ami):
+                return ami
+    return None
+
+
+def verify_upgrade_plan(plan: dict) -> None:
+    if not isinstance(plan, dict) or "planned_values" not in plan:
+        raise LabUpgradeConflict("Terraform did not return a valid upgrade plan")
+    for resource in plan.get("resource_changes", []):
+        actions = resource.get("change", {}).get("actions") or []
+        if not actions or set(actions) - {"create", "update", "read", "no-op"}:
+            raise LabUpgradeConflict("Lab upgrade would delete or replace existing resources; no cloud changes applied")
+
+
 def queue_destroy(connection, *, owner_id: str, deployment_id: str) -> dict[str, Any] | None:
     with connection.cursor(row_factory=dict_row) as cursor:
         row = cursor.execute(
@@ -112,7 +166,9 @@ def queue_destroy(connection, *, owner_id: str, deployment_id: str) -> dict[str,
     return row
 
 
-def run(database_url: str, deployment_id: str, *, owner_id: str, destroy: bool = False) -> None:
+def run(database_url: str, deployment_id: str, *, owner_id: str, destroy: bool = False, upgrade: bool = False) -> None:
+    if destroy and upgrade:
+        raise ValueError("A lab cannot be upgraded and destroyed together")
     with psycopg.connect(database_url, row_factory=dict_row, connect_timeout=5) as connection:
         deployment = connection.execute(
             """
@@ -167,8 +223,7 @@ def run(database_url: str, deployment_id: str, *, owner_id: str, destroy: bool =
     try:
         with tempfile.TemporaryDirectory(prefix="vanguard-lab-") as directory:
             workdir = Path(directory)
-            shutil.copy2(MODULE / "main.tf", workdir / "main.tf")
-            shutil.copy2(MODULE / ".terraform.lock.hcl", workdir / ".terraform.lock.hcl")
+            stage_module(workdir)
             state_path = workdir / "terraform.tfstate"
             if deployment["terraform_state"]:
                 state_path.write_text(json.dumps(deployment["terraform_state"]))
@@ -178,15 +233,31 @@ def run(database_url: str, deployment_id: str, *, owner_id: str, destroy: bool =
                 f"-var=region={deployment['region']}",
                 f"-var=gcp_project_id={deployment['scope_id']}",
             ]
+            if upgrade and deployment["provider"] == "aws":
+                ami = existing_lab_ami(deployment.get("terraform_state"))
+                if ami:
+                    variables.append(f"-var=aws_ami_id={ami}")
             subprocess.run(
                 ["terraform", "init", "-backend=false", "-input=false", "-no-color"],
                 cwd=workdir, env=environment, check=True, capture_output=True, text=True,
                 timeout=180,
             )
             command = "destroy" if destroy else "apply"
+            arguments = [*variables]
+            if upgrade:
+                subprocess.run(
+                    ["terraform", "plan", "-input=false", "-no-color", "-out=upgrade.tfplan", *variables],
+                    cwd=workdir, env=environment, check=True, capture_output=True, text=True, timeout=300,
+                )
+                planned = subprocess.run(
+                    ["terraform", "show", "-json", "upgrade.tfplan"], cwd=workdir, env=environment,
+                    check=True, capture_output=True, text=True, timeout=30,
+                )
+                verify_upgrade_plan(json.loads(planned.stdout))
+                arguments = ["upgrade.tfplan"]
             try:
                 subprocess.run(
-                    ["terraform", command, "-auto-approve", "-input=false", "-no-color", *variables],
+                    ["terraform", command, "-auto-approve", "-input=false", "-no-color", *arguments],
                     cwd=workdir, env=environment, check=True, capture_output=True, text=True,
                     timeout=900,
                 )
@@ -215,7 +286,8 @@ def run(database_url: str, deployment_id: str, *, owner_id: str, destroy: bool =
                 )
             connection.commit()
     except Exception as exc:
-        message = f"{type(exc).__name__}: lab operation failed; check cloud permissions, quotas and configuration"
+        message = (str(exc) if isinstance(exc, LabUpgradeConflict) else
+                   f"{type(exc).__name__}: lab operation failed; check cloud permissions, quotas and configuration")
         with psycopg.connect(database_url, connect_timeout=5) as connection:
             connection.execute(
                 """

@@ -14,6 +14,7 @@ PRESSURE = {
     "cpu_percent": ("CPU", "performance", "Review the processes or queries using the most CPU."),
     "memory_percent": ("Memory", "performance", "Review memory use and check for leaks."),
     "filesystem_percent": ("Storage", "capacity", "Review data retention and plan more storage."),
+    "capacity_percent": ("Serverless capacity", "capacity", "Review Aurora capacity limits and scaling behavior."),
 }
 
 
@@ -107,15 +108,19 @@ def _storage_forecast(resource, current, history):
 
 def _cost_reviews(resource, fresh, historical, policy):
     findings = []
+    if resource["resource_type"] not in VM_TYPES | {"cloudsql_instance", "rds_instance"}:
+        return findings
     # Conservative candidates for cost review: hourly peaks preserve bursts.
     for metric, label in (("cpu_percent", "CPU"), ("filesystem_percent", "Storage")):
+        if metric == "filesystem_percent" and resource["resource_type"] != "cloudsql_instance":
+            continue  # RDS storage cannot be shrunk in place.
         points = historical.get(metric, [])
         if metric not in fresh or not _history_ready(points, policy):
             continue
         values = [value for _, value in points]
         p95, peak = _percentile(values, 0.95), max(values)
         other_pressure = any(any(value >= policy.warning_percent for _, value in data)
-                             for key, data in fresh.items() if key in PRESSURE and key != metric)
+                             for group in (fresh, historical) for key, data in group.items() if key in PRESSURE and key != metric)
         if metric == "cpu_percent":
             # Never recommend a smaller instance while another known resource is pressured.
             if p95 >= policy.low_cpu_p95 or peak >= policy.low_cpu_peak or other_pressure or max(v for _, v in fresh[metric]) >= policy.low_cpu_peak:
@@ -189,10 +194,11 @@ def _delivery_alerts(resource, readings, now, policy):
     return findings
 
 
-def _reporting_accounts(recent, now):
+def _reporting_accounts(recent, now, resources):
     """Accounts with at least one fresh reading: their connection and permissions work."""
+    native = {(identity(resource), metric.key) for resource in resources for metric in metrics_for(resource) if metric.cloud_name}
     return {key[0][:3] for key, points in recent.items()
-            if points and 0 <= now - max(points) <= FRESH_SECONDS}
+            if key in native and points and 0 <= now - max(points) <= FRESH_SECONDS}
 
 
 def _visibility_suggestions(resource, definitions, fresh, cpu_history, history_available, policy,
@@ -303,16 +309,20 @@ def confirmed_checks(resources, recent_series, history_series, *, now, telemetry
     """Rules whose absence is meaningful; outages and sparse samples cannot clear them."""
     recent, history = indexed_series(recent_series), indexed_series(history_series)
     checked = set()
+    from . import paas
     for resource in resources:
         prefix = f"{resource['id']}:"
         if _recent_inventory(resource, now):
             checked.update(prefix + rule for rule in _inventory_checks(resource))
+            checked.update(prefix + rule for rule in paas.inventory_checks(resource, now, policy))
         if not telemetry_available or (resource.get("status") or "").lower() in INACTIVE:
             continue
         definitions = metrics_for(resource)
         readings = {definition.key: _points(recent, resource, definition.key, now, 1800) for definition in definitions}
         fresh = {key: points for key, points in readings.items() if points and now - points[-1][0] <= FRESH_SECONDS}
         historical = {key: _points(history, resource, key, now, policy.history_days * 86400 + 3600) for key in readings}
+        checked.update(prefix + rule for rule in paas.metric_checks(resource, readings, historical, now=now,
+                                                                   history_available=history_available, policy=policy))
         if definitions:
             checked.add(prefix + "missing_telemetry")
         for metric in (*PRESSURE, "oldest_message_seconds", "failed_per_second"):
@@ -340,9 +350,17 @@ def confirmed_checks(resources, recent_series, history_series, *, now, telemetry
 def evaluate(resources, recent_series, history_series, *, now=None, telemetry_available=True,
              history_available=True, policy=DEFAULT_POLICY):
     now = now if now is not None else time.time()
+    # Gen 2 functions and their managed Run service describe the same workload.
+    # Keep both in inventory/utilization; emit recommendations on the function once.
+    backing = {(str(item.get("owner_id")), item.get("scope_id"), item.get("region"), (item.get("attributes") or {}).get("run_service"))
+               for item in resources if item["resource_type"] == "cloud_function"
+               and (item.get("attributes") or {}).get("generation") == "GEN_2" and (item.get("attributes") or {}).get("run_service")}
+    resources = [item for item in resources if item["resource_type"] != "cloud_run_service"
+                 or (str(item.get("owner_id")), item.get("scope_id"), item.get("region"), item.get("name")) not in backing]
     recent, history = indexed_series(recent_series), indexed_series(history_series)
     findings, eligible, monitored, ready = [], 0, 0, 0
-    reporting = _reporting_accounts(recent, now)
+    from . import paas
+    reporting = _reporting_accounts(recent, now, resources)
     parked = {volume_id for item in resources if item["resource_type"] == "ec2_instance"
               and (item.get("status") or "").lower() in INACTIVE for volume_id in _attached_volume_ids(item) or []}
     for resource in resources:
@@ -377,10 +395,13 @@ def evaluate(resources, recent_series, history_series, *, now=None, telemetry_av
             if forecast:
                 findings.append(forecast)
         findings.extend(_delivery_alerts(resource, readings, now, policy))
+        findings.extend(item for item in paas.metric_checks(resource, readings, historical, now=now,
+                                                           history_available=history_available, policy=policy).values() if item)
         if history_available:
             findings.extend(_cost_reviews(resource, fresh, historical, policy))
             findings.extend(_network_changes(resource, readings, historical, now, policy))
     findings.extend(_inventory_reviews(resources, now))
+    findings.extend(item for resource in resources for item in paas.inventory_checks(resource, now, policy).values() if item)
     findings.sort(key=lambda item: ({"alert": 0, "recommendation": 1, "suggestion": 2}[item["kind"]],
                                     {"critical": 0, "warning": 1, "info": 2}[item["severity"]], item["resource_id"], item["rule"]))
     summary = {"resources": len(resources), "eligible": eligible, "monitored": monitored,
