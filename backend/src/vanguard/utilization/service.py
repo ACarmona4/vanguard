@@ -23,7 +23,9 @@ def query_series(resources, minutes=30):
     from ..presentation.repository import series as stored_series
     stored = stored_series(resources, minutes=minutes)
     if stored is not None:
-        return stored
+        resources = [r for r in resources if not (r.get("attributes") or {}).get("telemetry_profile")]
+        if not resources:
+            return stored
     # Values always originate in the database and are escaped as PromQL string literals.
     selectors = ['__name__=~"vanguard_.+"']
     owner_ids = {str(resource.get("owner_id") or "") for resource in resources}
@@ -32,7 +34,7 @@ def query_series(resources, minutes=30):
     selectors.append(f"owner_id={json.dumps(owner_ids.pop())}")
     resources = [resource for resource in resources if metrics_for(resource)]
     if not resources:
-        return []
+        return stored or []
     metadata_only = all(not metric.cloud_name for resource in resources for metric in metrics_for(resource))
     for index, label in enumerate(IDENTITY_LABELS[1:], start=1):
         values = {identity(resource)[index] for resource in resources}
@@ -46,8 +48,10 @@ def query_series(resources, minutes=30):
             body = json.load(response)
         if body.get("status") != "success" or body["data"]["resultType"] != "matrix" or body.get("warnings"):
             raise ValueError("Invalid metric response")
-        return body["data"]["result"]
+        return body["data"]["result"] + (stored or [])
     except Exception as exc:
+        if stored is not None:
+            return stored  # A cloud outage must not hide the locally stored presentation.
         if metadata_only:
             return []  # Current inventory gauges remain useful while their history is unavailable.
         raise MetricsUnavailable("Prometheus is unavailable. Start the observability service.") from exc

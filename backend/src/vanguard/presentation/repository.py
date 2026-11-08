@@ -58,21 +58,27 @@ def refresh(db, owner):
         return
     register(owner)
     db.execute(
-        "UPDATE inventory_resources SET last_seen_at=now() WHERE owner_id=%s", (owner,)
+        "UPDATE inventory_resources SET last_seen_at=now() WHERE owner_id=%s AND attributes->>'telemetry_profile'='commerce-production'",
+        (owner,),
     )
     db.execute(
-        "UPDATE cost_records SET usage_date=usage_date + (CURRENT_DATE - %s), collected_at=now() WHERE owner_id=%s",
-        (row["billing_date"], owner),
+        "UPDATE cost_records SET usage_date=usage_date + (CURRENT_DATE - %s), collected_at=now() WHERE owner_id=%s "
+        "AND connection_id IN (SELECT connection_id FROM inventory_resources WHERE owner_id=%s AND attributes->>'telemetry_profile'='commerce-production')",
+        (row["billing_date"], owner, owner),
     )
     db.execute(
         "UPDATE presentation_workspaces SET billing_date=CURRENT_DATE WHERE owner_id=%s",
         (owner,),
     )
     db.execute(
-        "UPDATE cost_sources SET last_synced_at=now() WHERE owner_id=%s", (owner,)
+        "UPDATE cost_sources SET last_synced_at=now() WHERE owner_id=%s AND connection_id IN "
+        "(SELECT connection_id FROM inventory_resources WHERE owner_id=%s AND attributes->>'telemetry_profile'='commerce-production')",
+        (owner, owner),
     )
     db.execute(
-        "UPDATE cloud_connections SET last_synced_at=now() WHERE owner_id=%s", (owner,)
+        "UPDATE cloud_connections SET last_synced_at=now() WHERE owner_id=%s AND id IN "
+        "(SELECT connection_id FROM inventory_resources WHERE owner_id=%s AND attributes->>'telemetry_profile'='commerce-production')",
+        (owner, owner),
     )
 
 

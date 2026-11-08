@@ -155,3 +155,126 @@ class PresentationTests(unittest.TestCase):
                 self.assertGreater(len(history.json()["metrics"][0]["points"]), 2000)
         finally:
             auth.delete_session(self.db, token)
+
+    def test_z_refresh_and_reseed_preserve_real_records_in_same_workspace(self):
+        from datetime import datetime, timedelta, timezone
+
+        from psycopg.types.json import Jsonb
+        from vanguard.connections import repository as connections
+        from vanguard.inventory.database import UPSERT_SQL
+
+        cloud = connections.create_connection(
+            self.db,
+            owner_id=self.org,
+            provider="aws",
+            name="Real connection",
+            scope_id="123456789012",
+            regions=["us-east-1"],
+            credential_hint="test",
+            identity="test",
+            encrypted_credentials="test",
+        )
+        now = datetime.now(timezone.utc) - timedelta(days=3)
+        self.db.execute(
+            UPSERT_SQL,
+            {
+                "owner_id": self.org,
+                "connection_id": cloud["id"],
+                "provider": "aws",
+                "resource_type": "ec2_instance",
+                "resource_id": "i-real-preserve",
+                "name": "real-instance",
+                "scope_id": "123456789012",
+                "region": "us-east-1",
+                "zone": None,
+                "status": "running",
+                "attributes": Jsonb({}),
+                "raw_data": Jsonb({}),
+                "collected_at": now,
+            },
+        )
+        for level in ("service", "resource"):
+            self.db.execute(
+                "INSERT INTO cost_records(owner_id,connection_id,usage_date,provider,scope_id,level,service,category,currency,amount) VALUES(%s,%s,CURRENT_DATE-45,'aws','123456789012',%s,'Compute','Compute','USD',21)",
+                (self.org, cloud["id"], level),
+            )
+        self.db.commit()
+        inventory = self.db.execute(
+            "SELECT * FROM inventory_resources WHERE owner_id=%s AND resource_id='i-real-preserve'",
+            (self.org,),
+        ).fetchone()
+        costs = self.db.execute(
+            "SELECT * FROM cost_records WHERE connection_id=%s ORDER BY id",
+            (cloud["id"],),
+        ).fetchall()
+        presentation.refresh(self.db, self.org)
+        self.db.commit()
+        self.seed.seed(self.db, self.org)
+        self.assertEqual(
+            inventory,
+            self.db.execute(
+                "SELECT * FROM inventory_resources WHERE id=%s", (inventory["id"],)
+            ).fetchone(),
+        )
+        self.assertEqual(
+            costs,
+            self.db.execute(
+                "SELECT * FROM cost_records WHERE connection_id=%s ORDER BY id",
+                (cloud["id"],),
+            ).fetchall(),
+        )
+        self.assertEqual(
+            self.db.execute(
+                "SELECT count(*) AS n FROM recommendation_tickets WHERE organization_id=%s",
+                (self.org,),
+            ).fetchone()["n"],
+            6,
+        )
+
+
+class MixedTelemetryTests(unittest.TestCase):
+    def test_cloud_and_stored_readings_are_merged_and_outages_preserve_stored_data(
+        self,
+    ):
+        import json
+        from unittest.mock import MagicMock
+
+        real = {
+            "id": 1,
+            "owner_id": "workspace",
+            "provider": "aws",
+            "resource_type": "ec2_instance",
+            "resource_id": "i-real",
+            "attributes": {},
+        }
+        stored_resource = {
+            **real,
+            "id": 2,
+            "resource_id": "i-presentation",
+            "attributes": {"telemetry_profile": "commerce-production"},
+        }
+        stored = [
+            {
+                "metric": {"resource_id": "i-presentation"},
+                "values": [[1800000000, "42"]],
+            }
+        ]
+        cloud = [{"metric": {"resource_id": "i-real"}, "values": [[1800000000, "63"]]}]
+        for function, module in (
+            (query_series, "vanguard.utilization.service"),
+            (query_history, "vanguard.recommendations.telemetry"),
+        ):
+            response = MagicMock()
+            response.__enter__.return_value.read.return_value = json.dumps(
+                {"status": "success", "data": {"resultType": "matrix", "result": cloud}}
+            ).encode()
+            with (
+                patch("vanguard.presentation.repository.series", return_value=stored),
+                patch(module + ".urlopen", return_value=response),
+            ):
+                self.assertEqual(function([real, stored_resource]), cloud + stored)
+            with (
+                patch("vanguard.presentation.repository.series", return_value=stored),
+                patch(module + ".urlopen", side_effect=OSError("Unavailable")),
+            ):
+                self.assertEqual(function([real, stored_resource]), stored)

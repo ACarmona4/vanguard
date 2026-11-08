@@ -31,7 +31,9 @@ def query_history(resources, *, now=None, policy=DEFAULT_POLICY):
     from ..presentation.repository import series as stored_series
     stored = stored_series(resources, minutes=(policy.history_days + 1)*1440, hourly=True, now=now)
     if stored is not None:
-        return stored
+        resources = [r for r in resources if not (r.get("attributes") or {}).get("telemetry_profile")]
+        if not resources:
+            return stored
     owners = {identity(resource)[0] for resource in resources}
     if len(owners) != 1 or not next(iter(owners)):
         raise ValueError("Recommendation history requires a single authenticated owner")
@@ -62,6 +64,8 @@ def query_history(resources, *, now=None, policy=DEFAULT_POLICY):
             body = json.load(response)
         if body.get("status") != "success" or body["data"]["resultType"] != "matrix" or body.get("warnings"):
             raise ValueError("Incomplete metric history")
-        return body["data"]["result"]
+        return body["data"]["result"] + (stored or [])
     except Exception as exc:
+        if stored is not None:
+            return stored  # A cloud outage must not hide the locally stored presentation.
         raise MetricsUnavailable("Usage history is unavailable. Try again later.") from exc

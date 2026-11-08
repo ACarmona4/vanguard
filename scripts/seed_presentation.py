@@ -5,6 +5,7 @@ Re-running preserves recommendation decisions and tickets. Samples replay relati
  to the current clock; billing dates roll daily with the recommendation worker.
 """
 
+import argparse
 import math
 import os
 from datetime import datetime, timedelta, timezone
@@ -600,7 +601,7 @@ def samples(metric, base, index, name):
     return values
 
 
-def seed(db):
+def seed(db, workspace=WORKSPACE):
     now = datetime.now(timezone.utc)
     existing = db.execute(
         "SELECT id,full_name FROM app_users ORDER BY created_at LIMIT 1"
@@ -611,22 +612,22 @@ def seed(db):
         )
     db.execute(
         "INSERT INTO organizations(id,name) VALUES (%s,'Northstar Commerce') ON CONFLICT(id) DO NOTHING",
-        (WORKSPACE,),
+        (workspace,),
     )
     db.execute(
         "INSERT INTO organization_members(organization_id,user_id,role) SELECT %s,user_id,role FROM organization_members WHERE organization_id=%s ON CONFLICT DO NOTHING",
-        (WORKSPACE, existing["id"]),
+        (workspace, existing["id"]),
     )
     db.execute(
         "INSERT INTO organization_members(organization_id,user_id,role) VALUES (%s,%s,'owner') ON CONFLICT DO NOTHING",
-        (WORKSPACE, existing["id"]),
+        (workspace, existing["id"]),
     )
     presentation.ensure_schema(db)
     db.execute(
         "INSERT INTO presentation_workspaces(owner_id) VALUES (%s) ON CONFLICT DO NOTHING",
-        (WORKSPACE,),
+        (workspace,),
     )
-    presentation.register(WORKSPACE)
+    presentation.register(workspace)
     db.commit()
     configured = {}
     for provider, scope, label in [
@@ -635,12 +636,12 @@ def seed(db):
     ]:
         row = db.execute(
             "SELECT id FROM cloud_connections WHERE owner_id=%s AND provider=%s AND scope_id=%s",
-            (WORKSPACE, provider, scope),
+            (workspace, provider, scope),
         ).fetchone()
         if not row:
             row = connections.create_connection(
                 db,
-                owner_id=WORKSPACE,
+                owner_id=workspace,
                 provider=provider,
                 name=label,
                 scope_id=scope,
@@ -656,9 +657,12 @@ def seed(db):
         )
         db.execute(
             "INSERT INTO cost_sources(connection_id,owner_id,provider,enabled,status,detail_available,last_synced_at) VALUES(%s,%s,%s,false,'success',true,now()) ON CONFLICT(connection_id) DO UPDATE SET enabled=false,status='success',detail_available=true,last_synced_at=now()",
-            (row["id"], WORKSPACE, provider),
+            (row["id"], workspace, provider),
         )
-    db.execute("DELETE FROM cost_records WHERE owner_id=%s", (WORKSPACE,))
+    db.execute(
+        "DELETE FROM cost_records WHERE owner_id=%s AND connection_id=ANY(%s)",
+        (workspace, list(configured.values())),
+    )
     count = 0
     from vanguard.utilization.catalog import metrics_for
 
@@ -708,7 +712,7 @@ def seed(db):
             else "ACTIVE"
         )
         resource = {
-            "owner_id": WORKSPACE,
+            "owner_id": workspace,
             "connection_id": configured[provider],
             "provider": provider,
             "resource_type": kind,
@@ -725,7 +729,7 @@ def seed(db):
         db.execute(UPSERT_SQL, resource)
         row = db.execute(
             "SELECT * FROM inventory_resources WHERE owner_id=%s AND provider=%s AND resource_type=%s AND resource_id=%s",
-            (WORKSPACE, provider, kind, rid),
+            (workspace, provider, kind, rid),
         ).fetchone()
         for definition in metrics_for(row):
             if definition.attribute:
@@ -747,7 +751,7 @@ def seed(db):
             db.execute(
                 "INSERT INTO presentation_metrics(owner_id,inventory_id,metric,samples) VALUES(%s,%s,%s,%s) ON CONFLICT(owner_id,inventory_id,metric) DO UPDATE SET samples=excluded.samples",
                 (
-                    WORKSPACE,
+                    workspace,
                     row["id"],
                     definition.key,
                     Jsonb(samples(definition.key, base, index, name)),
@@ -760,7 +764,7 @@ def seed(db):
                 """INSERT INTO cost_records(owner_id,connection_id,usage_date,provider,scope_id,level,service,category,resource_id,resource_name,region,currency,amount) VALUES(%s,%s,%s,%s,%s,'resource',%s,%s,%s,%s,%s,'USD',%s)""",
                 [
                     (
-                        WORKSPACE,
+                        workspace,
                         configured[provider],
                         now.date() - timedelta(days=day),
                         provider,
@@ -791,26 +795,26 @@ def seed(db):
     db.execute(
         """INSERT INTO cost_records(owner_id,connection_id,usage_date,provider,scope_id,level,service,category,region,currency,amount)
     SELECT owner_id,connection_id,usage_date,provider,scope_id,'service',service,category,max(region),currency,sum(amount)
-    FROM cost_records WHERE owner_id=%s AND level='resource' GROUP BY owner_id,connection_id,usage_date,provider,scope_id,service,category,currency""",
-        (WORKSPACE,),
+    FROM cost_records WHERE owner_id=%s AND connection_id=ANY(%s) AND level='resource' GROUP BY owner_id,connection_id,usage_date,provider,scope_id,service,category,currency""",
+        (workspace, list(configured.values())),
     )
     db.execute(
         "UPDATE presentation_workspaces SET billing_date=CURRENT_DATE WHERE owner_id=%s",
-        (WORKSPACE,),
+        (workspace,),
     )
     db.commit()
-    collect_workspace(db, WORKSPACE)
+    collect_workspace(db, workspace)
     # Exercise the normal recommendation -> ticket transitions, once per finding.
     if not db.execute(
-        "SELECT id FROM recommendation_tickets WHERE organization_id=%s LIMIT 1",
-        (WORKSPACE,),
+        "SELECT t.id FROM recommendation_tickets t JOIN recommendation_findings f ON f.id=t.finding_id JOIN inventory_resources r ON r.id=(f.finding->>'resource_id')::bigint WHERE t.organization_id=%s AND r.attributes->>'telemetry_profile'='commerce-production' LIMIT 1",
+        (workspace,),
     ).fetchone():
         rows = db.execute(
-            "SELECT id FROM recommendation_findings WHERE organization_id=%s AND finding->>'kind'='recommendation' ORDER BY first_detected_at,id LIMIT 6",
-            (WORKSPACE,),
+            "SELECT id FROM recommendation_findings WHERE organization_id=%s AND finding->>'kind'='recommendation' AND (finding->>'resource_id')::bigint IN (SELECT id FROM inventory_resources WHERE owner_id=%s AND attributes->>'telemetry_profile'='commerce-production') ORDER BY first_detected_at,id LIMIT 6",
+            (workspace, workspace),
         ).fetchall()
         for i, row in enumerate(rows):
-            row = recommendations.get_finding(db, WORKSPACE, row["id"])
+            row = recommendations.get_finding(db, workspace, row["id"])
             if i < 2:
                 ticket = tickets.ensure(db, row, existing)
                 tickets.event(
@@ -823,7 +827,7 @@ def seed(db):
             else:
                 recommendations.change(
                     db,
-                    WORKSPACE,
+                    workspace,
                     row["id"],
                     SimpleNamespace(
                         version=row["version"],
@@ -834,7 +838,7 @@ def seed(db):
                 )
                 ticket = db.execute(
                     "SELECT * FROM recommendation_tickets WHERE organization_id=%s AND finding_id=%s",
-                    (WORKSPACE, row["id"]),
+                    (workspace, row["id"]),
                 ).fetchone()
                 db.execute(
                     "UPDATE recommendation_tickets SET status='in_progress',due_date=CURRENT_DATE+2 WHERE id=%s",
@@ -848,10 +852,10 @@ def seed(db):
                     existing,
                 )
                 if i >= 4:
-                    row = recommendations.get_finding(db, WORKSPACE, row["id"])
+                    row = recommendations.get_finding(db, workspace, row["id"])
                     recommendations.change(
                         db,
-                        WORKSPACE,
+                        workspace,
                         row["id"],
                         SimpleNamespace(
                             version=row["version"],
@@ -862,20 +866,28 @@ def seed(db):
                     )
         db.commit()
     return {
-        "workspace": WORKSPACE,
+        "workspace": workspace,
         "resources": len(scenarios(now)),
         "samples": count,
         "findings": db.execute(
             "SELECT count(*) AS n FROM recommendation_findings WHERE organization_id=%s",
-            (WORKSPACE,),
+            (workspace,),
         ).fetchone()["n"],
     }
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--workspace",
+        type=UUID,
+        default=UUID(WORKSPACE),
+        help="Existing destination workspace UUID",
+    )
+    args = parser.parse_args()
     load_dotenv(ROOT / ".env")
     with psycopg.connect(os.environ["DATABASE_URL"], row_factory=dict_row) as db:
-        print(seed(db))
+        print(seed(db, str(args.workspace)))
 
 
 if __name__ == "__main__":

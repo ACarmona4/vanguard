@@ -27,13 +27,15 @@ class MetricsWorker:
 
     def snapshot(self, owner_id: str | None = None):
         from ..presentation.repository import snapshot
-        if owner_id is not None and (stored := snapshot(owner_id)):
-            return stored
+        stored = snapshot(owner_id) if owner_id is not None else None
         with self._lock:
             if owner_id is not None:
-                return dict(self._state["owners"].get(owner_id, {
+                state = dict(self._state["owners"].get(owner_id, {
                     "status": "disabled" if self._state["status"] == "disabled" else "pending", "last_finished_at": None, "errors": []
                 }))
+                if stored:
+                    return {**stored, "status": "partial", "errors": state["errors"]} if state["errors"] else stored
+                return state
             return {key: value for key, value in self._state.items() if key != "owners"}
 
     def _set(self, **values):
