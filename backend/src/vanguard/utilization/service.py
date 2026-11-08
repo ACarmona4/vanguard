@@ -20,6 +20,10 @@ class MetricsUnavailable(Exception):
 def query_series(resources, minutes=30):
     if not resources:
         return []
+    from ..presentation.repository import series as stored_series
+    stored = stored_series(resources, minutes=minutes)
+    if stored is not None:
+        return stored
     # Values always originate in the database and are escaped as PromQL string literals.
     selectors = ['__name__=~"vanguard_.+"']
     owner_ids = {str(resource.get("owner_id") or "") for resource in resources}

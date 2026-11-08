@@ -105,6 +105,8 @@ async def lifespan(_app: FastAPI):
             cost_repository.ensure_schema(connection)
             organizations.ensure_schema(connection)
             recommendation_repository.ensure_schema(connection)
+            from .presentation import repository as presentation
+            presentation.ensure_schema(connection)
             connection.commit()
     cloud_collection_scheduler.configure()
     task = None

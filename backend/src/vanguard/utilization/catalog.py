@@ -176,6 +176,8 @@ def metrics_for(resource: dict) -> tuple[Metric, ...]:
                              "network/connections" if version.startswith("MYSQL") else None)
         metrics = tuple(replace(metric, label="Database connections", cloud_name="cloudsql.googleapis.com/database/" + connection_metric)
                         if metric.key == "connections" else metric for metric in metrics if metric.key != "connections" or connection_metric)
+    if attributes.get("telemetry_profile") and resource["resource_type"] in {"ec2_instance", "compute_instance"}:
+        metrics = (*metrics, Metric("memory_percent", "Memory", "%"), Metric("filesystem_percent", "Disk used", "%"))
     return metrics
 
 

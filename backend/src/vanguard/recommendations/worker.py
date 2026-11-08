@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 
 
 def collect_workspace(connection, organization_id):
+    from ..presentation import repository as presentation
+    if str(organization_id) in presentation.OWNERS:
+        presentation.refresh(connection, organization_id)
+        connection.commit()
     report = evaluate_inventory(connection, str(organization_id))
     repository.save_evaluation(connection, organization_id, report)
     connection.commit()
@@ -36,6 +40,9 @@ class RecommendationWorker:
                 "WHERE NOT EXISTS (SELECT 1 FROM cloud_connections c WHERE c.owner_id = o.id) "
                 "OR EXISTS (SELECT 1 FROM cloud_connections c WHERE c.owner_id = o.id AND c.enabled)"
             ).fetchall()
+            from ..presentation import repository as presentation
+            existing = {str(row["id"]) for row in organizations}
+            organizations.extend({"id": owner} for owner in presentation.OWNERS if owner not in existing)
 
         def collect_one(organization):
             try:

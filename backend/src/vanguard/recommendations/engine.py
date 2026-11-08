@@ -216,7 +216,7 @@ def _visibility_suggestions(resource, definitions, fresh, cpu_history, history_a
                                  ["Check the cloud connection and monitoring permissions.", "Restore metric collection before reviewing capacity."],
                                  metric="metric_coverage", value=covered, unit="metrics", window="20m",
                                  explanation=f"{covered} of {len(required)} required metrics have recent readings."))
-    if resource["resource_type"] in VM_TYPES and fresh:
+    if resource["resource_type"] in VM_TYPES and fresh and not {"memory_percent", "filesystem_percent"}.issubset(fresh):
         findings.append(_finding(resource, "capacity_visibility", "suggestion", "info", "observability",
                                  "Add memory and disk metrics", "Memory use and disk space are unavailable for this VM.",
                                  ["Add an agent to collect memory and disk usage.", "Check the VM's network limit before resizing."],

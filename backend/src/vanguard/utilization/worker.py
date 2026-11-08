@@ -26,6 +26,9 @@ class MetricsWorker:
         self._state = {"status": "pending", "last_finished_at": None, "errors": [], "owners": {}}
 
     def snapshot(self, owner_id: str | None = None):
+        from ..presentation.repository import snapshot
+        if owner_id is not None and (stored := snapshot(owner_id)):
+            return stored
         with self._lock:
             if owner_id is not None:
                 return dict(self._state["owners"].get(owner_id, {

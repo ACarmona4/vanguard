@@ -28,6 +28,10 @@ HISTORY_METRICS = (
 def query_history(resources, *, now=None, policy=DEFAULT_POLICY):
     if not resources:
         return []
+    from ..presentation.repository import series as stored_series
+    stored = stored_series(resources, minutes=(policy.history_days + 1)*1440, hourly=True, now=now)
+    if stored is not None:
+        return stored
     owners = {identity(resource)[0] for resource in resources}
     if len(owners) != 1 or not next(iter(owners)):
         raise ValueError("Recommendation history requires a single authenticated owner")
